@@ -277,7 +277,15 @@ fn non_empty_string(value: &Value) -> Option<String> {
 }
 
 fn extract_thread_id_from_object(object: &Map<String, Value>) -> Option<String> {
-    for key in ["threadId", "thread_id", "sessionId", "session_id", "id"] {
+    for key in [
+        "threadId",
+        "thread_id",
+        "sessionId",
+        "session_id",
+        "conversationId",
+        "conversation_id",
+        "id",
+    ] {
         if let Some(value) = object_field(object, key).and_then(non_empty_string) {
             return Some(value);
         }
@@ -294,7 +302,7 @@ fn extract_thread_id_from_object(object: &Map<String, Value>) -> Option<String> 
 }
 
 fn extract_scope_id_from_object(object: &Map<String, Value>) -> Option<String> {
-    for key in ["scopeId", "scope_id", "conversationId", "conversation_id"] {
+    for key in ["scopeId", "scope_id"] {
         if let Some(value) = object_field(object, key).and_then(non_empty_string) {
             return Some(value);
         }
@@ -370,6 +378,36 @@ mod tests {
             .expect("scope notification should arrive")
             .expect("scope notification should be valid");
         assert_eq!(delivered.method, "turn/updated");
+    }
+
+    #[tokio::test]
+    async fn notification_router_should_treat_conversation_id_as_thread_id() {
+        let router = NotificationRouter::new();
+        let mut receiver = router.register("thread-1", "scope-1").await;
+
+        router
+            .dispatch(CodexNotification {
+                method: "codex/event/mcp_startup_update".to_owned(),
+                params: json!({
+                    "conversationId": "thread-1",
+                    "msg": {
+                        "type": "mcp_startup_update",
+                        "server": "pal",
+                        "status": {
+                            "state": "ready",
+                        },
+                    },
+                }),
+            })
+            .await
+            .expect("conversation-scoped notification should route to the thread");
+
+        let delivered = receiver
+            .recv()
+            .await
+            .expect("conversation notification should arrive")
+            .expect("conversation notification should be valid");
+        assert_eq!(delivered.method, "codex/event/mcp_startup_update");
     }
 
     #[tokio::test]

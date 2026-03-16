@@ -138,6 +138,15 @@ pub struct ClaudeMetadataEvent {
     pub model_id: Option<String>,
 }
 
+/// Rate-limit metadata emitted by Claude outside the assistant content stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaudeRateLimitEvent {
+    /// Provider-native Claude session identifier.
+    pub session_id: Option<String>,
+    /// Raw rate-limit info payload.
+    pub rate_limit_info: Value,
+}
+
 /// Final turn metadata emitted by Claude.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClaudeFinishEvent {
@@ -147,6 +156,12 @@ pub struct ClaudeFinishEvent {
     pub usage: Usage,
     /// Provider-native Claude session identifier.
     pub session_id: Option<String>,
+    /// Whether Claude marked the terminal result as an error.
+    pub is_error: bool,
+    /// Provider-declared terminal result text when present.
+    pub result: Option<String>,
+    /// Provider-declared terminal error code when present.
+    pub error_code: Option<String>,
 }
 
 /// All normalized events emitted by the parser.
@@ -166,6 +181,8 @@ pub enum ClaudeNormalizedEvent {
     ToolProgress(ClaudeToolProgressEvent),
     /// Session/model metadata.
     Metadata(ClaudeMetadataEvent),
+    /// Rate-limit metadata.
+    RateLimit(ClaudeRateLimitEvent),
     /// Final usage + finish reason.
     Finish(ClaudeFinishEvent),
 }
@@ -176,6 +193,7 @@ pub struct ClaudeEventParser {
     active_tools_by_block: HashMap<u64, ActiveToolBlock>,
     seen_stream_tool_call_ids: HashSet<String>,
     has_seen_stream_events: bool,
+    last_error_code: Option<String>,
 }
 
 impl ClaudeEventParser {
@@ -220,7 +238,8 @@ impl ClaudeEventParser {
             "stream_event" => self.parse_stream_event(record),
             "assistant" => self.parse_assistant(record),
             "user" => Self::parse_user(record),
-            "result" => Ok(Self::parse_result(record)),
+            "rate_limit_event" => Ok(Self::parse_rate_limit_event(record)),
+            "result" => Ok(self.parse_result(record)),
             "tool_progress" => Self::parse_tool_progress(record),
             other => Err(protocol_error(
                 format!("unsupported Claude stream message type `{other}`"),
@@ -241,6 +260,16 @@ impl ClaudeEventParser {
         }
 
         Vec::new()
+    }
+
+    fn parse_rate_limit_event(record: &Map<String, Value>) -> Vec<ClaudeNormalizedEvent> {
+        vec![ClaudeNormalizedEvent::RateLimit(ClaudeRateLimitEvent {
+            session_id: normalize_optional_string(record.get("session_id")),
+            rate_limit_info: record
+                .get("rate_limit_info")
+                .cloned()
+                .unwrap_or(Value::Null),
+        })]
     }
 
     fn parse_stream_event(
@@ -279,9 +308,10 @@ impl ClaudeEventParser {
     }
 
     fn parse_assistant(
-        &self,
+        &mut self,
         record: &Map<String, Value>,
     ) -> Result<Vec<ClaudeNormalizedEvent>, ProviderError> {
+        self.last_error_code = normalize_optional_string(record.get("error"));
         let message = record.get("message").ok_or_else(|| {
             protocol_error(
                 "assistant message is missing `message`",
@@ -418,12 +448,21 @@ impl ClaudeEventParser {
         Ok(events)
     }
 
-    fn parse_result(record: &Map<String, Value>) -> Vec<ClaudeNormalizedEvent> {
+    fn parse_result(
+        &mut self,
+        record: &Map<String, Value>,
+    ) -> Vec<ClaudeNormalizedEvent> {
         let session_id = normalize_optional_string(record.get("session_id"));
         let finish_reason = normalize_optional_string(record.get("stop_reason"))
             .or_else(|| normalize_optional_string(record.get("subtype")))
             .unwrap_or_else(|| "unknown".to_owned());
         let usage = parse_usage(record.get("usage"));
+        let is_error = record
+            .get("is_error")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let result = normalize_optional_string(record.get("result"));
+        let error_code = self.last_error_code.take();
 
         vec![
             ClaudeNormalizedEvent::Metadata(ClaudeMetadataEvent {
@@ -435,6 +474,9 @@ impl ClaudeEventParser {
                 finish_reason,
                 usage,
                 session_id,
+                is_error,
+                result,
+                error_code,
             }),
         ]
     }
@@ -852,6 +894,7 @@ mod tests {
                     ClaudeNormalizedEvent::ToolUseComplete(_) => "tool_complete",
                     ClaudeNormalizedEvent::ToolResult(_) => "tool_result",
                     ClaudeNormalizedEvent::Metadata(_) => "metadata",
+                    ClaudeNormalizedEvent::RateLimit(_) => "rate_limit",
                     ClaudeNormalizedEvent::Finish(_) => "finish",
                     ClaudeNormalizedEvent::ToolProgress(_) => "tool_progress",
                 })
@@ -941,5 +984,21 @@ mod tests {
         };
 
         assert_eq!(result.result_json, json!("done"));
+    }
+
+    #[test]
+    fn parser_should_normalize_rate_limit_event_fixture() {
+        let events = parse_fixture("rate_limit_stream.jsonl");
+
+        let rate_limit = events
+            .iter()
+            .find_map(|event| match event {
+                ClaudeNormalizedEvent::RateLimit(event) => Some(event),
+                _ => None,
+            })
+            .expect("rate limit event should exist");
+
+        assert_eq!(rate_limit.session_id.as_deref(), Some("session-rate"));
+        assert_eq!(rate_limit.rate_limit_info["status"], "allowed");
     }
 }

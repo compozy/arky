@@ -1,7 +1,7 @@
 # Getting Started
 
 This guide gets a new Arky consumer from `cargo add` to a runnable agent with
-provider selection, streaming, and examples you can compile locally.
+provider selection, streaming, and provider examples you can compile locally.
 
 ## Prerequisites
 
@@ -100,13 +100,17 @@ while let Some(event) = stream.next().await {
 - Expose or import MCP tools through `arky-mcp`.
 - Keep canonical tool identity stable: `mcp/<server>/<tool>`.
 
-## Examples
+## Live Examples
 
-The workspace includes runnable numbered examples under [`examples/`](../examples):
+The workspace includes a live provider-validation suite under
+[`examples/`](../examples). These scenarios are self-checking and intentionally
+target real provider behavior rather than local mock demos.
 
-- `cargo run --example 01_minimal -p arky`
-- `cargo run --example 07_event_streaming -p arky`
-- `cargo run --example 12_full_control -p arky --features full`
+- `cargo run --example 01_claude_basic -p arky`
+- `cargo run --example 04_codex_basic -p arky`
+- `cargo run --example 09_live_matrix -p arky -- all`
+
+Use `make test-live` to run the grouped suite locally.
 
 ## Verification Commands
 
@@ -130,3 +134,5 @@ cargo bench --no-run
 - Start from `arky::prelude::*` unless you explicitly need a lower-level crate.
 - Use the fixture-backed provider tests when changing protocol parsing or
   stream normalization logic.
+- Use the live examples when you need to confirm that Claude Code or Codex
+  still work against real binaries and credentials.

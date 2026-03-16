@@ -68,6 +68,13 @@ async fn inspect_cancel(
     Ok(cancel.is_cancelled().to_string())
 }
 
+#[tool]
+/// Trim and uppercase a single string argument.
+async fn normalize_text(text: String) -> Result<String, arky_tools::ToolError> {
+    tokio::task::yield_now().await;
+    Ok(text.trim().to_uppercase())
+}
+
 #[tokio::test]
 async fn tool_macro_should_register_and_execute_generated_tool() {
     let registry = ToolRegistry::new();
@@ -91,6 +98,27 @@ async fn tool_macro_should_register_and_execute_generated_tool() {
         .expect("generated tool should execute");
 
     assert_eq!(result.content, vec![ToolContent::text("hello:3")]);
+}
+
+#[tokio::test]
+async fn tool_macro_should_accept_direct_json_for_single_primitive_argument() {
+    let registry = ToolRegistry::new();
+    registry
+        .register(NormalizeTextTool)
+        .expect("single-argument tool should register");
+
+    let descriptor = NormalizeTextTool.descriptor();
+    assert_eq!(descriptor.input_schema["type"], "string");
+
+    let result = registry
+        .execute(
+            ToolCall::new("call-direct", "mcp/local/normalize_text", json!("  arky  ")),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("single-argument tool should accept a direct string input");
+
+    assert_eq!(result.content, vec![ToolContent::text("ARKY")]);
 }
 
 #[test]

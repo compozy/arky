@@ -45,52 +45,40 @@ tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "tes
 tokio-util.workspace = true
 
 [[example]]
-name = "01_minimal"
-path = "../../examples/01_minimal.rs"
+name = "01_claude_basic"
+path = "../../examples/01_claude_basic.rs"
 
 [[example]]
-name = "02_custom_provider"
-path = "../../examples/02_custom_provider.rs"
+name = "02_claude_tools"
+path = "../../examples/02_claude_tools.rs"
 
 [[example]]
-name = "03_system_prompt"
-path = "../../examples/03_system_prompt.rs"
+name = "03_claude_resume"
+path = "../../examples/03_claude_resume.rs"
 
 [[example]]
-name = "04_custom_tools"
-path = "../../examples/04_custom_tools.rs"
+name = "04_codex_basic"
+path = "../../examples/04_codex_basic.rs"
 
 [[example]]
-name = "05_tool_registry"
-path = "../../examples/05_tool_registry.rs"
+name = "05_codex_tools"
+path = "../../examples/05_codex_tools.rs"
 
 [[example]]
-name = "06_hooks"
-path = "../../examples/06_hooks.rs"
+name = "06_codex_resume"
+path = "../../examples/06_codex_resume.rs"
 
 [[example]]
-name = "07_event_streaming"
-path = "../../examples/07_event_streaming.rs"
+name = "07_codex_mcp"
+path = "../../examples/07_codex_mcp.rs"
 
 [[example]]
-name = "08_mcp_integration"
-path = "../../examples/08_mcp_integration.rs"
+name = "08_codex_control_flow"
+path = "../../examples/08_codex_control_flow.rs"
 
 [[example]]
-name = "09_sessions"
-path = "../../examples/09_sessions.rs"
-
-[[example]]
-name = "10_steering_followup"
-path = "../../examples/10_steering_followup.rs"
-
-[[example]]
-name = "11_server_exposure"
-path = "../../examples/11_server_exposure.rs"
-
-[[example]]
-name = "12_full_control"
-path = "../../examples/12_full_control.rs"
+name = "09_live_matrix"
+path = "../../examples/09_live_matrix.rs"
 
 [[bench]]
 name = "event_throughput"

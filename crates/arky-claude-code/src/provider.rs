@@ -202,7 +202,8 @@ impl ClaudeCodeProvider {
     ) -> Result<ProcessConfig, ProviderError> {
         let prompt = render_prompt(request);
         let mut args = self.config.extra_args.clone();
-        if self.config.verbose {
+        // Claude's `--output-format stream-json` currently requires `--verbose`.
+        if self.config.verbose || !args.iter().any(|arg| arg == "--verbose") {
             args.push("--verbose".to_owned());
         }
         args.push("--print".to_owned());
@@ -279,14 +280,19 @@ impl ClaudeCodeProvider {
 
             drop(transport);
             let stderr_excerpt = stderr_task.await.unwrap_or_default();
+            let terminal_error = runtime.terminal_error();
             match process.wait().await {
-                Ok(_) if runtime.finished() => {}
+                Ok(_) if runtime.finished() && terminal_error.is_none() => {}
+                Ok(_) if terminal_error.is_some() => Err(terminal_error.expect("checked is_some"))?,
                 Ok(_) => Err(ProviderError::protocol_violation(
                     "Claude stream ended without a terminal finish event",
                     Some(json!({
                         "stderr": stderr_excerpt.trim(),
                     })),
                 ))?,
+                Err(ProviderError::ProcessCrashed { .. }) if terminal_error.is_some() => {
+                    Err(terminal_error.expect("checked is_some"))?
+                }
                 Err(ProviderError::ProcessCrashed { command, exit_code, .. }) => {
                     Err(ProviderError::process_crashed(
                         command,
@@ -328,10 +334,11 @@ impl Provider for ClaudeCodeProvider {
         self.cooldown.record_success().await;
 
         let stdin = process.take_stdin()?;
+        drop(stdin);
         let stdout = process.take_stdout()?;
         let transport = StdioTransport::new(
             stdout,
-            stdin,
+            tokio::io::sink(),
             StdioTransportConfig {
                 max_frame_len: self.config.max_frame_len,
                 ..StdioTransportConfig::default()
@@ -455,6 +462,7 @@ struct StreamRuntime {
     current_message: Message,
     message_started: bool,
     finished: bool,
+    terminal_error: Option<ProviderError>,
 }
 
 impl StreamRuntime {
@@ -475,6 +483,7 @@ impl StreamRuntime {
             current_message: Message::new(Role::Assistant, Vec::new()),
             message_started: false,
             finished: false,
+            terminal_error: None,
         }
     }
 
@@ -488,6 +497,10 @@ impl StreamRuntime {
         self.finished
     }
 
+    fn terminal_error(&self) -> Option<ProviderError> {
+        self.terminal_error.clone()
+    }
+
     async fn handle_event(
         &mut self,
         event: ClaudeNormalizedEvent,
@@ -495,6 +508,9 @@ impl StreamRuntime {
         match event {
             ClaudeNormalizedEvent::Metadata(metadata) => {
                 self.handle_metadata(metadata).await
+            }
+            ClaudeNormalizedEvent::RateLimit(rate_limit) => {
+                self.handle_rate_limit(rate_limit).await
             }
             ClaudeNormalizedEvent::TextDelta(text) => Ok(self.handle_text_delta(&text)),
             ClaudeNormalizedEvent::ToolUseStart(tool) => self.handle_tool_use_start(tool),
@@ -528,8 +544,12 @@ impl StreamRuntime {
         &mut self,
         metadata: crate::parser::ClaudeMetadataEvent,
     ) -> Result<Vec<AgentEvent>, ProviderError> {
-        if let Some(session_id) = metadata.session_id.clone() {
-            self.sessions.record(session_id.clone()).await;
+        if let Some(session_id) = metadata.session_id.clone()
+            && let Some(request_session_id) = self.emitter.session_id.clone()
+        {
+            self.sessions
+                .record(&request_session_id, session_id.clone())
+                .await;
         }
         if metadata.session_id.is_none() && metadata.model_id.is_none() {
             return Ok(Vec::new());
@@ -541,6 +561,26 @@ impl StreamRuntime {
             payload: json!({
                 "session_id": metadata.session_id,
                 "model_id": metadata.model_id,
+            }),
+        }])
+    }
+
+    async fn handle_rate_limit(
+        &mut self,
+        rate_limit: crate::parser::ClaudeRateLimitEvent,
+    ) -> Result<Vec<AgentEvent>, ProviderError> {
+        if let Some(session_id) = rate_limit.session_id.clone()
+            && let Some(request_session_id) = self.emitter.session_id.clone()
+        {
+            self.sessions.record(&request_session_id, session_id).await;
+        }
+
+        Ok(vec![AgentEvent::Custom {
+            meta: self.emitter.next(),
+            event_type: "claude_code.rate_limit".to_owned(),
+            payload: json!({
+                "session_id": rate_limit.session_id,
+                "rate_limit_info": rate_limit.rate_limit_info,
             }),
         }])
     }
@@ -711,16 +751,19 @@ impl StreamRuntime {
         let mut emitted = Vec::new();
         self.deduplicator.reset();
         self.finished = true;
+        self.terminal_error = classify_terminal_error(finish, &self.current_message);
         self.ensure_message_started(&mut emitted);
         emitted.push(AgentEvent::MessageEnd {
             meta: self.emitter.next(),
             message: self.current_message.clone(),
         });
-        emitted.push(AgentEvent::TurnEnd {
-            meta: self.emitter.next(),
-            message: self.current_message.clone(),
-            tool_results: self.tool_results.clone(),
-        });
+        if self.terminal_error.is_none() {
+            emitted.push(AgentEvent::TurnEnd {
+                meta: self.emitter.next(),
+                message: self.current_message.clone(),
+                tool_results: self.tool_results.clone(),
+            });
+        }
         emitted.push(AgentEvent::Custom {
             meta: self.emitter.next(),
             event_type: "claude_code.finish".to_owned(),
@@ -728,10 +771,53 @@ impl StreamRuntime {
                 "finish_reason": finish.finish_reason,
                 "usage": finish.usage,
                 "session_id": finish.session_id,
+                "is_error": finish.is_error,
+                "result": finish.result,
+                "error_code": finish.error_code,
             }),
         });
         emitted
     }
+}
+
+fn classify_terminal_error(
+    finish: &crate::parser::ClaudeFinishEvent,
+    message: &Message,
+) -> Option<ProviderError> {
+    if !finish.is_error {
+        return None;
+    }
+
+    let detail = finish
+        .result
+        .clone()
+        .unwrap_or_else(|| assistant_message_text(message));
+
+    match finish.error_code.as_deref() {
+        Some("authentication_failed") => Some(ProviderError::auth_failed(detail)),
+        Some(error_code) => Some(ProviderError::protocol_violation(
+            detail,
+            Some(json!({
+                "error_code": error_code,
+            })),
+        )),
+        None => Some(ProviderError::protocol_violation(detail, None)),
+    }
+}
+
+fn assistant_message_text(message: &Message) -> String {
+    message
+        .content
+        .iter()
+        .filter_map(|block| {
+            if let ContentBlock::Text { text } = block {
+                Some(text.as_str())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[derive(Debug)]

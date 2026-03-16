@@ -3,7 +3,7 @@ SHELL := /bin/bash
 # Nightly is used exclusively for `cargo fmt` (unstable rustfmt options)
 RUST_NIGHTLY_VERSION := nightly-2026-03-15
 
-.PHONY: help fmt fmt-check lint lint-clippy lint-fix check build test coverage clean verify
+.PHONY: help fmt fmt-check lint lint-clippy lint-fix check build test test-live coverage clean verify
 
 .DEFAULT_GOAL := help
 
@@ -37,6 +37,9 @@ build: ## Build in release mode
 
 test: ## Run all tests
 	cargo test --all-features
+
+test-live: ## Run the live provider example matrix (set PROVIDER=claude|codex|all)
+	./scripts/run-live-examples.sh $(PROVIDER)
 
 coverage: ## Print code coverage summary
 	cargo llvm-cov --all-features --summary-only
