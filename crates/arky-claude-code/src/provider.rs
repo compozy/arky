@@ -44,18 +44,30 @@ use serde_json::{
     Value,
     json,
 };
-use tokio::io::AsyncReadExt;
+use tokio::{
+    io::{
+        AsyncReadExt,
+        AsyncWrite,
+        AsyncWriteExt,
+        BufWriter,
+    },
+    task::JoinHandle,
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     ClaudeCodeProviderConfig,
     ClaudeErrorClassifier,
     config::{
+        ClaudeInputFormat,
         validate_claude_model_id,
         validate_prompt_length,
         validate_session_id_format,
     },
-    conversion::collect_warning_messages,
+    conversion::{
+        ClaudeInjectedPromptStream,
+        collect_warning_messages,
+    },
     cooldown::SpawnFailureTracker,
     dedup::{
         TextDeduplicator,
@@ -176,17 +188,28 @@ impl ClaudeCodeProvider {
     async fn build_process_config(
         &self,
         request: &ProviderRequest,
-    ) -> Result<ProcessConfig, ProviderError> {
+    ) -> Result<ClaudeProcessPlan, ProviderError> {
         let prompt = render_prompt(request);
         let session_id = self.sessions.resolve(&request.session).await;
-        let args = self.config.cli_args(
-            prompt,
+        let input_format =
+            resolve_input_format(self.config.cli_behavior.streaming_input.as_deref())?;
+        let prompt_stream = if input_format == ClaudeInputFormat::StreamJson {
+            let (stream, injector) =
+                ClaudeInjectedPromptStream::new(prompt.clone(), session_id.clone(), None);
+            injector.close();
+            Some(stream)
+        } else {
+            None
+        };
+        let args = self.config.cli_args_with_input_format(
+            (input_format == ClaudeInputFormat::Text).then_some(prompt),
             request
                 .model
                 .provider_model_id
                 .clone()
                 .unwrap_or_else(|| request.model.model_id.clone()),
             session_id.as_deref(),
+            input_format,
         )?;
 
         let mut config = ProcessConfig::new(&self.config.binary)
@@ -199,7 +222,10 @@ impl ClaudeCodeProvider {
         for (key, value) in merged_env_layers(Some(&request_env), &self.config.env) {
             config = config.with_env(key.clone(), value.clone());
         }
-        Ok(config)
+        Ok(ClaudeProcessPlan {
+            process_config: config,
+            prompt_stream,
+        })
     }
 
     fn canonical_tool_name(&self, tool_name: &str) -> String {
@@ -214,6 +240,7 @@ impl ClaudeCodeProvider {
         request: ProviderRequest,
         mut process: ManagedProcess,
         transport: StdioTransport,
+        prompt_writer: Option<JoinHandle<Result<(), ProviderError>>>,
     ) -> Result<ProviderEventStream, ProviderError> {
         let stderr = process.take_stderr()?;
         let provider = self.clone();
@@ -236,6 +263,7 @@ impl ClaudeCodeProvider {
                 let _ = stderr.read_to_string(&mut buffer).await;
                 buffer
             });
+            let mut prompt_writer = prompt_writer;
             let mut transport = transport;
             let cancel = CancellationToken::new();
             let mut parser = ClaudeEventParser::new();
@@ -277,8 +305,19 @@ impl ClaudeCodeProvider {
                 callback.call(stderr_excerpt.trim());
             }
             if recovered_from_truncation {
+                if let Some(prompt_writer) = prompt_writer.take() {
+                    let _ = prompt_writer.await;
+                }
                 let _ = process.graceful_shutdown().await;
                 return;
+            }
+            if let Some(prompt_writer) = prompt_writer.take() {
+                let prompt_writer_result = prompt_writer.await.map_err(|error| {
+                    ProviderError::stream_interrupted(format!(
+                        "failed to join Claude stdin writer task: {error}"
+                    ))
+                })?;
+                prompt_writer_result?;
             }
             finish_stream_process(
                 &mut process,
@@ -306,8 +345,8 @@ impl Provider for ClaudeCodeProvider {
         let _version = self.ensure_binary_validated().await?;
         self.cooldown.wait_until_ready().await;
 
-        let process_config = self.build_process_config(&request).await?;
-        let manager = ProcessManager::new(process_config);
+        let process_plan = self.build_process_config(&request).await?;
+        let manager = ProcessManager::new(process_plan.process_config);
         let mut process = match manager.spawn() {
             Ok(process) => process,
             Err(error) => {
@@ -318,7 +357,12 @@ impl Provider for ClaudeCodeProvider {
         self.cooldown.record_success().await;
 
         let stdin = process.take_stdin()?;
-        drop(stdin);
+        let prompt_writer = if let Some(prompt_stream) = process_plan.prompt_stream {
+            Some(spawn_prompt_stream_writer(stdin, prompt_stream))
+        } else {
+            drop(stdin);
+            None
+        };
         let stdout = process.take_stdout()?;
         let transport = StdioTransport::new(
             stdout,
@@ -329,7 +373,7 @@ impl Provider for ClaudeCodeProvider {
             },
         );
 
-        self.build_stream(request, process, transport)
+        self.build_stream(request, process, transport, prompt_writer)
     }
 
     async fn generate(
@@ -344,6 +388,69 @@ impl Default for ClaudeCodeProvider {
     fn default() -> Self {
         Self::new()
     }
+}
+
+struct ClaudeProcessPlan {
+    process_config: ProcessConfig,
+    prompt_stream: Option<ClaudeInjectedPromptStream>,
+}
+
+fn resolve_input_format(
+    configured: Option<&str>,
+) -> Result<ClaudeInputFormat, ProviderError> {
+    match configured.unwrap_or("auto") {
+        "auto" | "text" => Ok(ClaudeInputFormat::Text),
+        "stream-json" => Ok(ClaudeInputFormat::StreamJson),
+        other => Err(ProviderError::protocol_violation(
+            format!("unsupported Claude input format `{other}`"),
+            None,
+        )),
+    }
+}
+
+fn spawn_prompt_stream_writer<W>(
+    writer: W,
+    mut prompt_stream: ClaudeInjectedPromptStream,
+) -> JoinHandle<Result<(), ProviderError>>
+where
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut writer = BufWriter::new(writer);
+        while let Some(message) = prompt_stream.next_message().await {
+            let encoded = serde_json::to_string(&message).map_err(|error| {
+                ProviderError::protocol_violation(
+                    format!("failed to serialize Claude prompt message: {error}"),
+                    None,
+                )
+            })?;
+            writer
+                .write_all(encoded.as_bytes())
+                .await
+                .map_err(|error| {
+                    ProviderError::stream_interrupted(format!(
+                        "failed to write Claude prompt message: {error}"
+                    ))
+                })?;
+            writer.write_all(b"\n").await.map_err(|error| {
+                ProviderError::stream_interrupted(format!(
+                    "failed to write Claude prompt newline: {error}"
+                ))
+            })?;
+            writer.flush().await.map_err(|error| {
+                ProviderError::stream_interrupted(format!(
+                    "failed to flush Claude prompt writer: {error}"
+                ))
+            })?;
+        }
+
+        writer.flush().await.map_err(|error| {
+            ProviderError::stream_interrupted(format!(
+                "failed to finalize Claude prompt writer: {error}"
+            ))
+        })?;
+        Ok(())
+    })
 }
 
 fn render_prompt(request: &ProviderRequest) -> String {
@@ -1223,8 +1330,8 @@ mod tests {
             .expect("process config should build");
 
         assert_eq!(
-            config.args.windows(2).any(|window| {
-                window == ["--session-id".to_owned(), "session-123".to_owned()]
+            config.process_config.args.windows(2).any(|window| {
+                window == ["--resume".to_owned(), "session-123".to_owned()]
             }),
             true
         );
@@ -1275,11 +1382,19 @@ mod tests {
             .expect("process config should build");
 
         assert_eq!(
-            config.env.get("FROM_REQUEST").map(String::as_str),
+            config
+                .process_config
+                .env
+                .get("FROM_REQUEST")
+                .map(String::as_str),
             Some("request")
         );
         assert_eq!(
-            config.env.get("FROM_PROVIDER").map(String::as_str),
+            config
+                .process_config
+                .env
+                .get("FROM_PROVIDER")
+                .map(String::as_str),
             Some("provider")
         );
     }

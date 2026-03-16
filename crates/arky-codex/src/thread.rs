@@ -16,6 +16,10 @@ use serde_json::{
     Map,
     Value,
 };
+use tokio::time::{
+    Duration,
+    timeout,
+};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::{
@@ -95,6 +99,7 @@ pub struct CompactThreadParams {
 /// Stream of notifications for one active turn.
 pub struct TurnNotificationStream {
     thread_id: String,
+    registration_id: u64,
     router: NotificationRouter,
     receiver: UnboundedReceiverStream<Result<CodexNotification, ProviderError>>,
 }
@@ -122,8 +127,11 @@ impl Drop for TurnNotificationStream {
     fn drop(&mut self) {
         let router = self.router.clone();
         let thread_id = self.thread_id.clone();
+        let registration_id = self.registration_id;
         tokio::spawn(async move {
-            router.unregister(&thread_id).await;
+            router
+                .unregister_if_matches(&thread_id, registration_id)
+                .await;
         });
     }
 }
@@ -196,7 +204,8 @@ where
             .scope_id
             .clone()
             .unwrap_or_else(|| thread_id.to_owned());
-        let receiver = self.router.register(thread_id.to_owned(), scope_id).await;
+        let (registration_id, receiver) =
+            self.router.register(thread_id.to_owned(), scope_id).await;
 
         let payload = turn_start_payload(thread_id, params);
         if let Err(error) = self.rpc.request_value("turn/start", Some(payload)).await {
@@ -206,6 +215,7 @@ where
 
         Ok(TurnNotificationStream {
             thread_id: thread_id.to_owned(),
+            registration_id,
             router: self.router.clone(),
             receiver: UnboundedReceiverStream::new(receiver),
         })
@@ -217,15 +227,91 @@ where
         thread_id: &str,
         params: CompactThreadParams,
     ) -> Result<(), ProviderError> {
-        self.rpc
+        let scope_id = params
+            .scope_id
+            .clone()
+            .unwrap_or_else(|| thread_id.to_owned());
+        let (registration_id, mut receiver) =
+            self.router.register(thread_id.to_owned(), scope_id).await;
+
+        let request_result = self
+            .rpc
             .request_value(
                 "thread/compact/start",
                 Some(thread_compact_payload(thread_id, params)),
             )
-            .await?;
+            .await;
+        if let Err(error) = request_result {
+            self.router
+                .unregister_if_matches(thread_id, registration_id)
+                .await;
+            return Err(error);
+        }
 
-        Ok(())
+        let completion = loop {
+            let item = timeout(Duration::from_secs(60), receiver.recv())
+                .await
+                .map_err(|_| {
+                    ProviderError::stream_interrupted(
+                        "timed out waiting for Codex compaction to complete",
+                    )
+                })?
+                .ok_or_else(|| {
+                    ProviderError::stream_interrupted(
+                        "compaction notification stream ended before completion",
+                    )
+                })?;
+            let notification = item?;
+            match canonical_notification_method(&notification.method).as_str() {
+                "turn/completed" => break Ok(()),
+                "turn/failed" | "error" => {
+                    break Err(ProviderError::protocol_violation(
+                        extract_error_message(&notification.params)
+                            .unwrap_or_else(|| "Codex compaction failed".to_owned()),
+                        None,
+                    ));
+                }
+                _ => {}
+            }
+        };
+
+        self.router
+            .unregister_if_matches(thread_id, registration_id)
+            .await;
+        completion
     }
+}
+
+fn canonical_notification_method(method: &str) -> String {
+    method.to_ascii_lowercase().replace('.', "/")
+}
+
+fn extract_error_message(params: &Value) -> Option<String> {
+    params
+        .as_object()
+        .and_then(|params| params.get("message"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            params
+                .as_object()
+                .and_then(|params| params.get("error"))
+                .and_then(Value::as_object)
+                .and_then(|error| error.get("message"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .or_else(|| {
+            params
+                .as_object()
+                .and_then(|params| params.get("turn"))
+                .and_then(Value::as_object)
+                .and_then(|turn| turn.get("error"))
+                .and_then(Value::as_object)
+                .and_then(|error| error.get("message"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
 }
 
 fn thread_open_payload(thread_id: Option<&str>, params: ThreadOpenParams) -> Value {
@@ -480,20 +566,36 @@ mod tests {
             calls: Mutex::new(Vec::new()),
             next_response: Mutex::new(json!({ "ok": true })),
         });
-        let manager = ThreadManager::new(rpc.clone(), NotificationRouter::new());
+        let router = NotificationRouter::new();
+        let manager = ThreadManager::new(rpc.clone(), router.clone());
 
-        manager
-            .compact_thread(
-                "thread-1",
-                CompactThreadParams {
-                    scope_id: Some("scope-1".to_owned()),
-                    payload: Map::from_iter([
-                        ("tokenThreshold".to_owned(), json!(8_192)),
-                        ("prompt".to_owned(), json!("compact now")),
-                    ]),
-                },
-            )
+        let compaction = tokio::spawn(async move {
+            manager
+                .compact_thread(
+                    "thread-1",
+                    CompactThreadParams {
+                        scope_id: Some("scope-1".to_owned()),
+                        payload: Map::from_iter([
+                            ("tokenThreshold".to_owned(), json!(8_192)),
+                            ("prompt".to_owned(), json!("compact now")),
+                        ]),
+                    },
+                )
+                .await
+        });
+        tokio::task::yield_now().await;
+        router
+            .dispatch(CodexNotification {
+                method: "turn/completed".to_owned(),
+                params: json!({
+                    "threadId": "thread-1",
+                }),
+            })
             .await
+            .expect("compaction completion should route");
+        compaction
+            .await
+            .expect("compaction task should finish")
             .expect("compaction should succeed");
 
         let calls = rpc.calls.lock().await.clone();

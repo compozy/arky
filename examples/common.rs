@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::{
+    collections::BTreeMap,
     env,
     error::Error,
     fs,
@@ -45,6 +46,10 @@ use arky::{
     TurnContext,
     TurnId,
     prelude::*,
+    usage::{
+        NormalizedUsage,
+        compute_estimated_cost,
+    },
 };
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -168,6 +173,98 @@ pub fn require_any_tool_execution(
     })
 }
 
+pub fn require_file_nonempty(path: &Path, context: &str) -> Result<(), ExampleError> {
+    let metadata = fs::metadata(path).map_err(|error| {
+        io::Error::other(format!(
+            "{context}: failed to stat `{}`: {error}",
+            path.display()
+        ))
+    })?;
+    require(
+        metadata.len() > 0,
+        format!("{context}: expected `{}` to be non-empty", path.display()),
+    )
+}
+
+pub fn custom_event_payloads(events: &[AgentEvent], event_type: &str) -> Vec<Value> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Custom {
+                event_type: actual,
+                payload,
+                ..
+            } if actual == event_type => Some(payload.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+pub fn require_valid_message_part_ids(
+    events: &[AgentEvent],
+    context: &str,
+) -> Result<(), ExampleError> {
+    let part_ids = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::MessageStart { message, .. }
+            | AgentEvent::MessageUpdate { message, .. } => message
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.id.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    require(
+        !part_ids.is_empty(),
+        format!("{context}: no message part ids were observed"),
+    )?;
+
+    for part_id in part_ids {
+        require(
+            TurnId::parse_str(&part_id).is_ok(),
+            format!("{context}: invalid message part id `{part_id}`"),
+        )?;
+    }
+
+    Ok(())
+}
+
+pub fn final_turn_usage(events: &[AgentEvent]) -> Result<arky::Usage, ExampleError> {
+    events
+        .iter()
+        .rev()
+        .find_map(|event| match event {
+            AgentEvent::TurnEnd { usage, .. } => usage.clone(),
+            AgentEvent::Custom { payload, .. } => payload
+                .get("usage")
+                .cloned()
+                .and_then(|usage| serde_json::from_value(usage).ok()),
+            _ => None,
+        })
+        .ok_or_else(|| io::Error::other("missing terminal usage payload").into())
+}
+
+pub fn require_estimated_cost(
+    model: &str,
+    events: &[AgentEvent],
+    context: &str,
+) -> Result<f64, ExampleError> {
+    let usage = final_turn_usage(events)?;
+    let normalized = NormalizedUsage::from_protocol_usage(&usage);
+    let cost = compute_estimated_cost(model, &normalized).ok_or_else(|| {
+        io::Error::other(format!(
+            "{context}: no pricing entry found for model `{model}`"
+        ))
+    })?;
+    require(
+        cost > 0.0,
+        format!("{context}: expected positive estimated cost, got {cost}"),
+    )?;
+    Ok(cost)
+}
+
 pub fn final_turn_text(events: &[AgentEvent]) -> Result<String, ExampleError> {
     events
         .iter()
@@ -258,6 +355,14 @@ pub fn claude_provider(cwd: &Path) -> ClaudeCodeProvider {
     })
 }
 
+pub fn claude_provider_with_config(
+    cwd: &Path,
+    mut config: ClaudeCodeProviderConfig,
+) -> ClaudeCodeProvider {
+    config.cwd = Some(cwd.to_path_buf());
+    ClaudeCodeProvider::with_config(config)
+}
+
 pub fn codex_provider(cwd: &Path) -> CodexProvider {
     CodexProvider::with_config(CodexProviderConfig {
         cwd: Some(cwd.to_path_buf()),
@@ -341,6 +446,16 @@ pub fn codex_mcp_settings(url: &str) -> ProviderSettings {
         ),
     );
     settings
+}
+
+pub fn claude_mcp_config(url: &str) -> BTreeMap<String, Value> {
+    BTreeMap::from([(
+        "runtime".to_owned(),
+        json!({
+            "type": "http",
+            "url": url,
+        }),
+    )])
 }
 
 pub struct RevealTokenTool {

@@ -18,6 +18,7 @@ use arky_protocol::{
     StreamDelta,
     ToolContent,
     ToolResult,
+    Usage,
 };
 use arky_provider::{
     Provider,
@@ -284,6 +285,35 @@ impl CodexProvider {
                     continue;
                 }
                 let normalized = dispatcher.normalize(&notification);
+                match &normalized {
+                    NormalizedNotification::UsageUpdated { usage } => {
+                        if pipeline.state().last_usage.as_ref() != Some(usage) {
+                            pipeline.record_response_metadata(
+                                Some(thread_id.clone()),
+                                Some(usage.clone()),
+                            );
+                            yield pipeline.response_metadata_event(
+                                runtime.next_meta(),
+                                request.model.model_id.as_str(),
+                                &response_id,
+                            );
+                        }
+                    }
+                    NormalizedNotification::TurnCompleted { usage } if usage.is_some() => {
+                        if pipeline.state().last_usage.as_ref() != usage.as_ref() {
+                            pipeline.record_response_metadata(
+                                Some(thread_id.clone()),
+                                usage.clone(),
+                            );
+                            yield pipeline.response_metadata_event(
+                                runtime.next_meta(),
+                                request.model.model_id.as_str(),
+                                &response_id,
+                            );
+                        }
+                    }
+                    _ => {}
+                }
                 let events = runtime.handle_notification(normalized)?;
                 for event in events {
                     yield event;
@@ -520,6 +550,7 @@ struct StreamRuntime {
     tools: ToolTracker,
     tool_results: Vec<ToolResult>,
     reasoning: HashMap<String, String>,
+    usage: Option<Usage>,
     message_started: bool,
     message_finished: bool,
     finished: bool,
@@ -547,6 +578,7 @@ impl StreamRuntime {
             tools: ToolTracker::new(),
             tool_results: Vec::new(),
             reasoning: HashMap::new(),
+            usage: None,
             message_started: false,
             message_finished: false,
             finished: false,
@@ -645,7 +677,13 @@ impl StreamRuntime {
                     &call_id, tool_name, result, is_error,
                 )])
             }
-            NormalizedNotification::TurnCompleted => Ok(self.handle_turn_completed()),
+            NormalizedNotification::UsageUpdated { usage } => {
+                self.usage = Some(usage);
+                Ok(Vec::new())
+            }
+            NormalizedNotification::TurnCompleted { usage } => {
+                Ok(self.handle_turn_completed(usage))
+            }
             NormalizedNotification::TurnFailed { message } => {
                 Err(ProviderError::protocol_violation(message, None))
             }
@@ -809,13 +847,16 @@ impl StreamRuntime {
         }
     }
 
-    fn handle_turn_completed(&mut self) -> Vec<AgentEvent> {
+    fn handle_turn_completed(&mut self, usage: Option<Usage>) -> Vec<AgentEvent> {
+        if usage.is_some() {
+            self.usage = usage;
+        }
         let mut events = self.finalize_open_state();
         events.push(AgentEvent::TurnEnd {
             meta: self.emitter.next(),
             message: self.text.message(),
             tool_results: self.tool_results.clone(),
-            usage: None,
+            usage: self.usage.clone(),
         });
         self.finished = true;
         events
@@ -1008,5 +1049,41 @@ mod tests {
             .and_then(|metadata| metadata.id.as_deref())
             .expect("part id should be attached");
         assert_eq!(TurnId::parse_str(part_id).is_ok(), true);
+    }
+
+    #[test]
+    fn stream_runtime_should_preserve_usage_reported_before_turn_completion() {
+        let request = arky_provider::ProviderRequest::new(
+            SessionRef::new(None),
+            TurnContext::new(TurnId::new(), 1),
+            ModelRef::new("gpt-5"),
+            vec![Message::user("hello")],
+        );
+        let mut runtime =
+            StreamRuntime::new(&request, arky_protocol::ProviderId::new("codex"));
+
+        let usage = arky_protocol::Usage {
+            input_tokens: Some(10),
+            output_tokens: Some(5),
+            total_tokens: Some(15),
+            ..arky_protocol::Usage::default()
+        };
+
+        let no_events = runtime
+            .handle_notification(NormalizedNotification::UsageUpdated {
+                usage: usage.clone(),
+            })
+            .expect("usage update should succeed");
+        assert_eq!(no_events.is_empty(), true);
+
+        let events = runtime
+            .handle_notification(NormalizedNotification::TurnCompleted { usage: None })
+            .expect("turn completion should succeed");
+
+        let final_usage = events.iter().find_map(|event| match event {
+            arky_protocol::AgentEvent::TurnEnd { usage, .. } => usage.clone(),
+            _ => None,
+        });
+        assert_eq!(final_usage, Some(usage));
     }
 }

@@ -54,6 +54,9 @@ available, the example fails and prints the provider error.
 | `06_codex_resume` | Codex session persistence and resume behavior | Uses `InMemorySessionStore` |
 | `07_codex_mcp` | Codex MCP passthrough against an in-process HTTP MCP server | Validates remote tool reachability |
 | `08_codex_control_flow` | Codex `follow_up()` behavior in a real multi-turn session | `steer()` remains covered by deterministic non-live tests until the real-provider path has a stable trigger |
+| `10_claude_mcp` | Claude MCP passthrough against an in-process HTTP MCP server | Validates Claude CLI MCP wiring with a real remote tool |
+| `11_claude_runtime_config` | Claude env passthrough, runtime permission config, and debug file emission | Uses a real Bash tool invocation and verifies debug output lands on disk |
+| `12_codex_metadata_compaction` | Codex response metadata, token usage capture, estimated cost, part IDs, and thread compaction | Verifies `compact_thread()` and a live follow-up after compaction |
 | `09_live_matrix` | Runs the applicable scenario set for `claude`, `codex`, or `all` | Good entrypoint for manual smoke runs |
 
 ## Model Overrides

@@ -5,7 +5,13 @@ use std::{
         BTreeSet,
         HashMap,
     },
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{
+            AtomicU64,
+            Ordering,
+        },
+    },
 };
 
 use arky_provider::ProviderError;
@@ -33,6 +39,7 @@ type NotificationReceiver = mpsc::UnboundedReceiver<NotificationItem>;
 
 #[derive(Debug)]
 struct Registration {
+    id: u64,
     scope_id: String,
     sender: NotificationSender,
 }
@@ -47,6 +54,7 @@ struct RouterState {
 #[derive(Debug, Clone, Default)]
 pub struct NotificationRouter {
     state: Arc<Mutex<RouterState>>,
+    next_registration_id: Arc<AtomicU64>,
 }
 
 impl NotificationRouter {
@@ -61,15 +69,20 @@ impl NotificationRouter {
         &self,
         thread_id: impl Into<String>,
         scope_id: impl Into<String>,
-    ) -> NotificationReceiver {
+    ) -> (u64, NotificationReceiver) {
         let thread_id = thread_id.into();
         let scope_id = scope_id.into();
+        let registration_id = self
+            .next_registration_id
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1);
         let (sender, receiver) = mpsc::unbounded_channel();
         let mut state = self.state.lock().await;
 
         if let Some(previous) = state.threads.insert(
             thread_id.clone(),
             Registration {
+                id: registration_id,
                 scope_id: scope_id.clone(),
                 sender,
             },
@@ -78,14 +91,27 @@ impl NotificationRouter {
         }
 
         state.scopes.entry(scope_id).or_default().insert(thread_id);
+        drop(state);
 
-        receiver
+        (registration_id, receiver)
     }
 
     /// Removes all routing state for a thread.
     pub async fn unregister(&self, thread_id: &str) {
         let mut state = self.state.lock().await;
         if let Some(previous) = state.threads.remove(thread_id) {
+            remove_scope_thread(&mut state.scopes, &previous.scope_id, thread_id);
+        }
+    }
+
+    /// Removes routing state only when the active registration still matches.
+    pub async fn unregister_if_matches(&self, thread_id: &str, registration_id: u64) {
+        let mut state = self.state.lock().await;
+        let should_remove = state
+            .threads
+            .get(thread_id)
+            .is_some_and(|registration| registration.id == registration_id);
+        if should_remove && let Some(previous) = state.threads.remove(thread_id) {
             remove_scope_thread(&mut state.scopes, &previous.scope_id, thread_id);
         }
     }
@@ -337,7 +363,7 @@ mod tests {
     #[tokio::test]
     async fn notification_router_should_route_by_thread_id() {
         let router = NotificationRouter::new();
-        let mut receiver = router.register("thread-1", "scope-1").await;
+        let (_, mut receiver) = router.register("thread-1", "scope-1").await;
 
         router
             .dispatch(CodexNotification {
@@ -360,7 +386,7 @@ mod tests {
     #[tokio::test]
     async fn notification_router_should_route_by_scope_id() {
         let router = NotificationRouter::new();
-        let mut receiver = router.register("thread-1", "scope-1").await;
+        let (_, mut receiver) = router.register("thread-1", "scope-1").await;
 
         router
             .dispatch(CodexNotification {
@@ -383,7 +409,7 @@ mod tests {
     #[tokio::test]
     async fn notification_router_should_treat_conversation_id_as_thread_id() {
         let router = NotificationRouter::new();
-        let mut receiver = router.register("thread-1", "scope-1").await;
+        let (_, mut receiver) = router.register("thread-1", "scope-1").await;
 
         router
             .dispatch(CodexNotification {
@@ -433,8 +459,8 @@ mod tests {
     #[tokio::test]
     async fn notification_router_should_fan_out_account_notifications() {
         let router = NotificationRouter::new();
-        let mut first = router.register("thread-a", "scope-a").await;
-        let mut second = router.register("thread-b", "scope-b").await;
+        let (_, mut first) = router.register("thread-a", "scope-a").await;
+        let (_, mut second) = router.register("thread-b", "scope-b").await;
 
         router
             .dispatch(CodexNotification {
@@ -458,5 +484,49 @@ mod tests {
             .expect("second notification should be valid");
         assert_eq!(first.method, "account/updated");
         assert_eq!(second.method, "account/updated");
+    }
+
+    #[tokio::test]
+    async fn notification_router_should_ignore_stale_unregisters() {
+        let router = NotificationRouter::new();
+        let (first_registration, _first) = router.register("thread-1", "scope-1").await;
+        let (second_registration, mut second) =
+            router.register("thread-1", "scope-1").await;
+
+        router
+            .unregister_if_matches("thread-1", first_registration)
+            .await;
+        router
+            .dispatch(CodexNotification {
+                method: "turn/started".to_owned(),
+                params: json!({
+                    "threadId": "thread-1",
+                }),
+            })
+            .await
+            .expect("dispatch after stale unregister should succeed");
+
+        let delivered = second
+            .recv()
+            .await
+            .expect("replacement registration should still receive notifications")
+            .expect("notification should be valid");
+        assert_eq!(delivered.method, "turn/started");
+
+        router
+            .unregister_if_matches("thread-1", second_registration)
+            .await;
+        let error = router
+            .dispatch_to_thread(
+                "thread-1",
+                CodexNotification {
+                    method: "turn/completed".to_owned(),
+                    params: json!({
+                        "threadId": "thread-1",
+                    }),
+                },
+            )
+            .await;
+        assert_eq!(error.is_ok(), true);
     }
 }

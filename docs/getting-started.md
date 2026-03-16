@@ -107,7 +107,10 @@ The workspace includes a live provider-validation suite under
 target real provider behavior rather than local mock demos.
 
 - `cargo run --example 01_claude_basic -p arky`
+- `cargo run --example 10_claude_mcp -p arky`
+- `cargo run --example 11_claude_runtime_config -p arky`
 - `cargo run --example 04_codex_basic -p arky`
+- `cargo run --example 12_codex_metadata_compaction -p arky`
 - `cargo run --example 09_live_matrix -p arky -- all`
 
 Use `make test-live` to run the grouped suite locally.

@@ -21,6 +21,24 @@ pub const KNOWN_CLAUDE_MODEL_IDS: [&str; 3] = ["opus", "sonnet", "haiku"];
 /// Prompt length threshold after which a warning should be surfaced.
 pub const MAX_PROMPT_WARNING_LENGTH: usize = 100_000;
 
+/// Claude CLI input encoding used for one request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaudeInputFormat {
+    /// Pass the prompt as plain CLI text.
+    Text,
+    /// Pass the prompt over stdin using Claude's stream-json format.
+    StreamJson,
+}
+
+impl ClaudeInputFormat {
+    const fn as_cli_value(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::StreamJson => "stream-json",
+        }
+    }
+}
+
 /// Shared callback used to surface Claude stderr to callers.
 #[derive(Clone)]
 pub struct ClaudeStderrCallback(Arc<dyn Fn(&str) + Send + Sync>);
@@ -255,8 +273,24 @@ impl ClaudeCodeProviderConfig {
         model: String,
         runtime_session_id: Option<&str>,
     ) -> Result<Vec<String>, ProviderError> {
+        self.cli_args_with_input_format(
+            Some(prompt),
+            model,
+            runtime_session_id,
+            ClaudeInputFormat::Text,
+        )
+    }
+
+    /// Builds CLI arguments for one Claude request using the selected input mode.
+    pub(crate) fn cli_args_with_input_format(
+        &self,
+        prompt: Option<String>,
+        model: String,
+        runtime_session_id: Option<&str>,
+        input_format: ClaudeInputFormat,
+    ) -> Result<Vec<String>, ProviderError> {
         let mut args = self.extra_args.clone();
-        self.push_base_args(&mut args, prompt, model);
+        self.push_base_args(&mut args, prompt, model, input_format);
         self.push_limit_args(&mut args);
         self.push_permission_args(&mut args);
         self.push_session_args(&mut args, runtime_session_id);
@@ -267,14 +301,24 @@ impl ClaudeCodeProviderConfig {
         Ok(args)
     }
 
-    fn push_base_args(&self, args: &mut Vec<String>, prompt: String, model: String) {
+    fn push_base_args(
+        &self,
+        args: &mut Vec<String>,
+        prompt: Option<String>,
+        model: String,
+        input_format: ClaudeInputFormat,
+    ) {
         if self.cli_behavior.verbose || !args.iter().any(|arg| arg == "--verbose") {
             args.push("--verbose".to_owned());
         }
         args.push("--print".to_owned());
-        args.push(prompt);
+        if let Some(prompt) = prompt {
+            args.push(prompt);
+        }
         args.push("--output-format".to_owned());
         args.push("stream-json".to_owned());
+        args.push("--input-format".to_owned());
+        args.push(input_format.as_cli_value().to_owned());
         args.push("--model".to_owned());
         args.push(self.cli_behavior.fallback_model.clone().unwrap_or(model));
     }
@@ -282,17 +326,9 @@ impl ClaudeCodeProviderConfig {
     fn push_limit_args(&self, args: &mut Vec<String>) {
         push_optional_arg(
             args,
-            "--max-turns",
-            self.max_turns.map(|value| value.to_string()),
+            "--effort",
+            mapped_effort(self.reasoning_effort.as_deref()),
         );
-        push_optional_arg(
-            args,
-            "--max-thinking-tokens",
-            self.max_thinking_tokens
-                .or_else(|| thinking_budget(self.reasoning_effort.as_deref()))
-                .map(|value| value.to_string()),
-        );
-        push_optional_arg(args, "--reasoning-effort", self.reasoning_effort.clone());
         push_optional_arg(
             args,
             "--max-budget-usd",
@@ -309,11 +345,6 @@ impl ClaudeCodeProviderConfig {
         if self.permission.allow_dangerously_skip_permissions {
             args.push("--allow-dangerously-skip-permissions".to_owned());
         }
-        push_optional_arg(
-            args,
-            "--permission-prompt-tool-name",
-            self.permission.prompt_tool_name.clone(),
-        );
     }
 
     fn push_session_args(
@@ -332,22 +363,7 @@ impl ClaudeCodeProviderConfig {
                 .clone()
                 .or_else(|| runtime_session_id.map(ToOwned::to_owned)),
         );
-        push_optional_arg(
-            args,
-            "--session-id",
-            self.session
-                .session_id
-                .clone()
-                .or_else(|| runtime_session_id.map(ToOwned::to_owned)),
-        );
-        push_optional_arg(
-            args,
-            "--resume-session-at",
-            self.session.resume_session_at.clone(),
-        );
-        if self.session.persist_session {
-            args.push("--persist-session".to_owned());
-        }
+        push_optional_arg(args, "--session-id", self.session.session_id.clone());
         if self.session.fork_session {
             args.push("--fork-session".to_owned());
         }
@@ -355,26 +371,20 @@ impl ClaudeCodeProviderConfig {
 
     fn push_prompt_args(&self, args: &mut Vec<String>) {
         push_optional_arg(args, "--system-prompt", effective_system_prompt(self));
+        push_optional_arg(
+            args,
+            "--append-system-prompt",
+            self.append_system_prompt.clone(),
+        );
     }
 
     fn push_tool_and_fs_args(&self, args: &mut Vec<String>) {
-        for tool in &self.allowed_tools {
-            push_flag_value(args, "--allowed-tool", tool.clone());
-        }
-        for tool in &self.disallowed_tools {
-            push_flag_value(args, "--disallowed-tool", tool.clone());
-        }
-        for source in &self.setting_sources {
-            push_flag_value(args, "--setting-source", source.clone());
-        }
-        for beta in &self.betas {
-            push_flag_value(args, "--beta", beta.clone());
-        }
+        push_joined_values(args, "--allowed-tools", &self.allowed_tools);
+        push_joined_values(args, "--disallowed-tools", &self.disallowed_tools);
+        push_joined_values(args, "--setting-sources", &self.setting_sources);
+        push_joined_values(args, "--betas", &self.betas);
         for directory in &self.filesystem.additional_directories {
             push_flag_value(args, "--add-dir", directory.display().to_string());
-        }
-        if self.filesystem.enable_file_checkpointing {
-            args.push("--enable-file-checkpointing".to_owned());
         }
     }
 
@@ -387,11 +397,6 @@ impl ClaudeCodeProviderConfig {
         }
         push_optional_arg(
             args,
-            "--streaming-input",
-            self.cli_behavior.streaming_input.clone(),
-        );
-        push_optional_arg(
-            args,
             "--debug-file",
             self.cli_behavior
                 .debug_file
@@ -401,33 +406,74 @@ impl ClaudeCodeProviderConfig {
     }
 
     fn push_json_args(&self, args: &mut Vec<String>) -> Result<(), ProviderError> {
-        if let Some(hooks) = &self.hooks {
-            push_json_flag(args, "--hooks", hooks)?;
-        }
-        if let Some(hook_options) = &self.hook_options {
-            push_json_flag(args, "--hook-options", hook_options)?;
-        }
         if !self.mcp_servers.is_empty() {
             push_json_flag(
                 args,
-                "--mcp-server",
-                &Value::Object(self.mcp_servers.clone().into_iter().collect()),
+                "--mcp-config",
+                &serde_json::json!({
+                    "mcpServers": Value::Object(
+                        self.mcp_servers.clone().into_iter().collect()
+                    ),
+                }),
             )?;
-        }
-        if let Some(sandbox) = &self.sandbox {
-            push_json_flag(args, "--sandbox", sandbox)?;
         }
         if let Some(agents) = &self.agents {
             push_json_flag(args, "--agents", agents)?;
         }
         for plugin in &self.plugins {
-            push_json_flag(
-                args,
-                "--plugin",
-                &resolve_plugin_value(plugin, self.cwd.as_deref()),
-            )?;
+            let plugin_dir = resolve_plugin_dir(plugin, self.cwd.as_deref())?;
+            push_flag_value(args, "--plugin-dir", plugin_dir);
+        }
+        if let Some(settings) = self.settings_payload() {
+            push_json_flag(args, "--settings", &settings)?;
         }
         Ok(())
+    }
+
+    fn settings_payload(&self) -> Option<Value> {
+        let mut settings = serde_json::Map::new();
+
+        if let Some(max_turns) = self.max_turns {
+            settings.insert("maxTurns".to_owned(), serde_json::json!(max_turns));
+        }
+        if let Some(max_thinking_tokens) = self
+            .max_thinking_tokens
+            .or_else(|| thinking_budget(self.reasoning_effort.as_deref()))
+        {
+            settings.insert(
+                "maxThinkingTokens".to_owned(),
+                serde_json::json!(max_thinking_tokens),
+            );
+        }
+        if let Some(prompt_tool_name) = &self.permission.prompt_tool_name {
+            settings.insert(
+                "permissionPromptToolName".to_owned(),
+                Value::String(prompt_tool_name.clone()),
+            );
+        }
+        if let Some(resume_session_at) = &self.session.resume_session_at {
+            settings.insert(
+                "resumeSessionAt".to_owned(),
+                Value::String(resume_session_at.clone()),
+            );
+        }
+        if !self.session.persist_session {
+            settings.insert("noSessionPersistence".to_owned(), Value::Bool(true));
+        }
+        if self.filesystem.enable_file_checkpointing {
+            settings.insert("enableFileCheckpointing".to_owned(), Value::Bool(true));
+        }
+        if let Some(hooks) = &self.hooks {
+            settings.insert("hooks".to_owned(), hooks.clone());
+        }
+        if let Some(hook_options) = &self.hook_options {
+            settings.insert("hookOptions".to_owned(), hook_options.clone());
+        }
+        if let Some(sandbox) = &self.sandbox {
+            settings.insert("sandbox".to_owned(), sandbox.clone());
+        }
+
+        (!settings.is_empty()).then_some(Value::Object(settings))
     }
 }
 
@@ -479,6 +525,14 @@ fn push_flag_value(args: &mut Vec<String>, flag: &str, value: String) {
     args.push(value);
 }
 
+fn push_joined_values(args: &mut Vec<String>, flag: &str, values: &[String]) {
+    if values.is_empty() {
+        return;
+    }
+
+    push_flag_value(args, flag, values.join(","));
+}
+
 fn push_json_flag(
     args: &mut Vec<String>,
     flag: &str,
@@ -496,25 +550,32 @@ fn push_json_flag(
     Ok(())
 }
 
-fn resolve_plugin_value(plugin: &Value, cwd: Option<&Path>) -> Value {
+fn resolve_plugin_dir(
+    plugin: &Value,
+    cwd: Option<&Path>,
+) -> Result<String, ProviderError> {
     match plugin {
-        Value::String(path) => ClaudePluginConfig::local(path).to_value(cwd),
+        Value::String(path) => Ok(resolve_plugin_dir_path(path, cwd)),
         Value::Object(record) => {
-            let mut resolved = record.clone();
-            if resolved.get("type").and_then(Value::as_str) == Some("local") {
-                for key in ["path", "localPath", "file"] {
-                    let Some(Value::String(path)) = resolved.get(key) else {
-                        continue;
-                    };
-                    resolved.insert(
-                        key.to_owned(),
-                        Value::String(resolve_plugin_path(path, cwd)),
-                    );
-                }
+            for key in ["path", "localPath", "file"] {
+                let Some(Value::String(path)) = record.get(key) else {
+                    continue;
+                };
+                return Ok(resolve_plugin_dir_path(path, cwd));
             }
-            Value::Object(resolved)
+            Err(ProviderError::protocol_violation(
+                "Claude plugin descriptors must include a local path",
+                Some(serde_json::json!({
+                    "plugin": record,
+                })),
+            ))
         }
-        other => other.clone(),
+        other => Err(ProviderError::protocol_violation(
+            "unsupported Claude plugin descriptor",
+            Some(serde_json::json!({
+                "plugin": other,
+            })),
+        )),
     }
 }
 
@@ -526,6 +587,16 @@ fn resolve_plugin_path(path: impl AsRef<Path>, cwd: Option<&Path>) -> String {
 
     cwd.unwrap_or_else(|| Path::new("."))
         .join(candidate)
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn resolve_plugin_dir_path(path: impl AsRef<Path>, cwd: Option<&Path>) -> String {
+    let resolved = resolve_plugin_path(path, cwd);
+    let resolved_path = Path::new(&resolved);
+    resolved_path
+        .parent()
+        .unwrap_or(resolved_path)
         .to_string_lossy()
         .into_owned()
 }
@@ -579,6 +650,14 @@ fn thinking_budget(reasoning_effort: Option<&str>) -> Option<u32> {
     }
 }
 
+fn mapped_effort(reasoning_effort: Option<&str>) -> Option<String> {
+    match reasoning_effort {
+        Some("xhigh") => Some("max".to_owned()),
+        Some(level @ ("low" | "medium" | "high" | "max")) => Some(level.to_owned()),
+        _ => None,
+    }
+}
+
 fn remap_permission_mode(permission_mode: &str) -> String {
     if permission_mode == "delegate" {
         return "dontAsk".to_owned();
@@ -592,11 +671,6 @@ fn effective_system_prompt(config: &ClaudeCodeProviderConfig) -> Option<String> 
         .system_prompt
         .clone()
         .or_else(|| config.custom_system_prompt.clone())
-        .or_else(|| {
-            config.append_system_prompt.as_ref().map(|append| {
-                format!("{{\"type\":\"preset\",\"preset\":\"claude_code\",\"append\":{append:?}}}")
-            })
-        })
 }
 
 #[cfg(test)]
@@ -615,6 +689,7 @@ mod tests {
     use super::{
         ClaudeCliBehaviorConfig,
         ClaudeCodeProviderConfig,
+        ClaudeInputFormat,
         ClaudePermissionConfig,
         ClaudePluginConfig,
         ClaudeSandboxConfig,
@@ -641,7 +716,11 @@ mod tests {
             hooks: Some(json!({ "before": ["echo hi"] })),
             agents: Some(json!({ "researcher": { "prompt": "Investigate" } })),
             sandbox: Some(json!({ "mode": "workspace-write" })),
-            plugins: vec![json!({ "name": "plugin-a" })],
+            plugins: vec![
+                ClaudePluginConfig::local("./plugins/plugin-a/index.js")
+                    .to_value(Some(Path::new("/workspace"))),
+            ],
+            cwd: Some(PathBuf::from("/workspace")),
             ..ClaudeCodeProviderConfig::default()
         };
 
@@ -650,23 +729,30 @@ mod tests {
             .expect("args should build");
 
         assert!(args.windows(2).any(|window| {
-            window == ["--session-id".to_owned(), "session-123".to_owned()]
-        }));
-        assert!(
-            args.windows(2)
-                .any(|window| { window == ["--max-turns".to_owned(), "8".to_owned()] })
-        );
-        assert!(args.windows(2).any(|window| {
-            window == ["--max-thinking-tokens".to_owned(), "63999".to_owned()]
+            window == ["--resume".to_owned(), "session-123".to_owned()]
         }));
         assert!(args.windows(2).any(|window| {
             window == ["--permission-mode".to_owned(), "dontAsk".to_owned()]
         }));
         assert!(args.windows(2).any(|window| {
-            window[0] == "--mcp-server" && window[1].contains("runtime")
+            window[0] == "--mcp-config" && window[1].contains("\"mcpServers\"")
         }));
         assert!(args.windows(2).any(|window| {
             window[0] == "--agents" && window[1].contains("researcher")
+        }));
+        assert!(args.windows(2).any(|window| {
+            window[0] == "--append-system-prompt" && window[1] == "extra"
+        }));
+        assert!(args.windows(2).any(|window| {
+            window[0] == "--plugin-dir"
+                && window[1].contains("/workspace/./plugins/plugin-a")
+        }));
+        assert!(args.windows(2).any(|window| {
+            window[0] == "--settings"
+                && window[1].contains("\"maxTurns\":8")
+                && window[1].contains("\"maxThinkingTokens\":63999")
+                && window[1].contains("\"hooks\"")
+                && window[1].contains("\"sandbox\"")
         }));
     }
 
@@ -683,7 +769,7 @@ mod tests {
             .expect("args should build");
 
         assert!(args.windows(2).any(|window| {
-            window == ["--max-thinking-tokens".to_owned(), "999".to_owned()]
+            window[0] == "--settings" && window[1].contains("\"maxThinkingTokens\":999")
         }));
     }
 
@@ -718,13 +804,19 @@ mod tests {
         };
 
         let args = config
-            .cli_args("hello".to_owned(), "sonnet".to_owned(), None)
+            .cli_args_with_input_format(
+                None,
+                "sonnet".to_owned(),
+                None,
+                ClaudeInputFormat::StreamJson,
+            )
             .expect("args should build");
 
         assert!(args.windows(2).any(|window| {
-            window[0] == "--plugin"
-                && window[1].contains("/workspace/./plugins/researcher.js")
-                && window[1].contains("\"type\":\"local\"")
+            window[0] == "--plugin-dir" && window[1].contains("/workspace/./plugins")
+        }));
+        assert!(args.windows(2).any(|window| {
+            window == ["--input-format".to_owned(), "stream-json".to_owned()]
         }));
     }
 
@@ -749,7 +841,7 @@ mod tests {
             window[0] == "--debug-file" && window[1] == "claude.debug.log"
         }));
         assert!(args.windows(2).any(|window| {
-            window[0] == "--sandbox" && window[1].contains("workspace-write")
+            window[0] == "--settings" && window[1].contains("\"sandbox\"")
         }));
     }
 

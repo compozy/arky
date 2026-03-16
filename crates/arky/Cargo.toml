@@ -81,6 +81,18 @@ path = "../../examples/08_codex_control_flow.rs"
 name = "09_live_matrix"
 path = "../../examples/09_live_matrix.rs"
 
+[[example]]
+name = "10_claude_mcp"
+path = "../../examples/10_claude_mcp.rs"
+
+[[example]]
+name = "11_claude_runtime_config"
+path = "../../examples/11_claude_runtime_config.rs"
+
+[[example]]
+name = "12_codex_metadata_compaction"
+path = "../../examples/12_codex_metadata_compaction.rs"
+
 [[bench]]
 name = "event_throughput"
 path = "../../benches/event_throughput.rs"

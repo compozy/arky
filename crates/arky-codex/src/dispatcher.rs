@@ -2,7 +2,12 @@
 
 use std::sync::Arc;
 
-use arky_protocol::TurnId;
+use arky_protocol::{
+    InputTokenDetails,
+    OutputTokenDetails,
+    TurnId,
+    Usage,
+};
 use arky_tools::ToolIdCodec;
 use serde_json::{
     Map,
@@ -12,7 +17,7 @@ use serde_json::{
 use crate::CodexNotification;
 
 /// Normalized provider event produced from one Codex notification.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum NormalizedNotification {
     /// Notification is intentionally ignored.
     Ignored,
@@ -81,8 +86,16 @@ pub enum NormalizedNotification {
         /// Whether the tool completed with an error.
         is_error: bool,
     },
+    /// Turn usage snapshot updated out-of-band.
+    UsageUpdated {
+        /// Usage payload reported for the current turn.
+        usage: Usage,
+    },
     /// Turn completed successfully.
-    TurnCompleted,
+    TurnCompleted {
+        /// Usage payload reported by the completed turn, when available.
+        usage: Option<Usage>,
+    },
     /// Turn failed.
     TurnFailed {
         /// Failure message.
@@ -131,7 +144,15 @@ impl CodexEventDispatcher {
             .map(canonical_item_type);
 
         match method.as_str() {
-            "turn/completed" => NormalizedNotification::TurnCompleted,
+            "thread/tokenusage/updated" | "codex/event/token_count" => {
+                let Some(usage) = extract_incremental_usage(params) else {
+                    return NormalizedNotification::Ignored;
+                };
+                NormalizedNotification::UsageUpdated { usage }
+            }
+            "turn/completed" => NormalizedNotification::TurnCompleted {
+                usage: extract_usage(params),
+            },
             "turn/failed" | "error" => NormalizedNotification::TurnFailed {
                 message: extract_error_message(params)
                     .unwrap_or_else(|| "Codex turn failed".to_owned()),
@@ -264,6 +285,98 @@ impl CodexEventDispatcher {
             })
             .unwrap_or_else(|| TurnId::new().to_string())
     }
+}
+
+fn extract_usage(params: Option<&Map<String, Value>>) -> Option<Usage> {
+    params
+        .and_then(|params| params.get("usage"))
+        .cloned()
+        .and_then(|usage| serde_json::from_value(usage).ok())
+}
+
+fn extract_incremental_usage(params: Option<&Map<String, Value>>) -> Option<Usage> {
+    params
+        .and_then(extract_thread_usage_snapshot)
+        .or_else(|| params.and_then(extract_token_count_snapshot))
+        .and_then(parse_usage_snapshot)
+}
+
+fn extract_thread_usage_snapshot(params: &Map<String, Value>) -> Option<&Value> {
+    params
+        .get("tokenUsage")
+        .or_else(|| params.get("token_usage"))
+        .and_then(Value::as_object)
+        .and_then(|token_usage| {
+            token_usage
+                .get("last")
+                .or_else(|| token_usage.get("lastTokenUsage"))
+                .or_else(|| token_usage.get("total"))
+                .or_else(|| token_usage.get("totalTokenUsage"))
+        })
+}
+
+fn extract_token_count_snapshot(params: &Map<String, Value>) -> Option<&Value> {
+    params
+        .get("msg")
+        .and_then(Value::as_object)
+        .and_then(|msg| msg.get("info"))
+        .and_then(Value::as_object)
+        .and_then(|info| {
+            info.get("last_token_usage")
+                .or_else(|| info.get("lastTokenUsage"))
+                .or_else(|| info.get("total_token_usage"))
+                .or_else(|| info.get("totalTokenUsage"))
+        })
+}
+
+fn parse_usage_snapshot(snapshot: &Value) -> Option<Usage> {
+    let snapshot = snapshot.as_object()?;
+    let input_tokens = u64_field(snapshot, "input_tokens", "inputTokens");
+    let output_tokens = u64_field(snapshot, "output_tokens", "outputTokens");
+    let total_tokens = u64_field(snapshot, "total_tokens", "totalTokens").or_else(|| {
+        input_tokens
+            .and_then(|input| output_tokens.map(|output| input.saturating_add(output)))
+    });
+    let cached_input_tokens =
+        u64_field(snapshot, "cached_input_tokens", "cachedInputTokens");
+    let reasoning_output_tokens =
+        u64_field(snapshot, "reasoning_output_tokens", "reasoningOutputTokens");
+    let text_output_tokens = output_tokens
+        .map(|output| output.saturating_sub(reasoning_output_tokens.unwrap_or_default()));
+    let input_details = (cached_input_tokens.is_some() || input_tokens.is_some())
+        .then_some(InputTokenDetails {
+            cache_read: cached_input_tokens,
+            cache_write: None,
+            no_cache: input_tokens.map(|input| {
+                input.saturating_sub(cached_input_tokens.unwrap_or_default())
+            }),
+        });
+    let output_details = (reasoning_output_tokens.is_some() || output_tokens.is_some())
+        .then_some(OutputTokenDetails {
+            text: text_output_tokens,
+            reasoning: reasoning_output_tokens,
+        });
+
+    Some(Usage {
+        input_tokens,
+        output_tokens,
+        total_tokens,
+        input_details,
+        output_details,
+        cost_usd: None,
+        duration_ms: None,
+    })
+}
+
+fn u64_field(
+    object: &Map<String, Value>,
+    snake_case: &str,
+    camel_case: &str,
+) -> Option<u64> {
+    object
+        .get(snake_case)
+        .or_else(|| object.get(camel_case))
+        .and_then(Value::as_u64)
 }
 
 fn normalize_tool_start(
@@ -583,7 +696,8 @@ mod tests {
             NormalizedNotification::ToolStart { .. } => "tool_start",
             NormalizedNotification::ToolUpdate { .. } => "tool_update",
             NormalizedNotification::ToolComplete { .. } => "tool_complete",
-            NormalizedNotification::TurnCompleted => "turn_completed",
+            NormalizedNotification::UsageUpdated { .. } => "usage_updated",
+            NormalizedNotification::TurnCompleted { .. } => "turn_completed",
             NormalizedNotification::TurnFailed { .. } => "turn_failed",
         }
     }
@@ -734,6 +848,21 @@ mod tests {
                 json!({"item": {"id": "tool-1", "type": "commandExecution", "status": "completed", "aggregatedOutput": "done"}}),
                 "tool_complete",
             ),
+            (
+                "thread/tokenUsage/updated",
+                json!({
+                    "tokenUsage": {
+                        "last": {
+                            "cachedInputTokens": 11,
+                            "inputTokens": 30,
+                            "outputTokens": 7,
+                            "reasoningOutputTokens": 5,
+                            "totalTokens": 37,
+                        }
+                    }
+                }),
+                "usage_updated",
+            ),
             ("turn.completed", json!({}), "turn_completed"),
             ("turn/failed", json!({"message": "boom"}), "turn_failed"),
             ("error", json!({"error": {"message": "bad"}}), "turn_failed"),
@@ -770,5 +899,44 @@ mod tests {
             ),
             ("account.changed", json!({"message": "done"}), "ignored"),
         ]
+    }
+
+    #[test]
+    fn dispatcher_should_extract_usage_from_thread_token_usage_updates() {
+        let mut dispatcher =
+            CodexEventDispatcher::new(Arc::new(create_codex_tool_id_codec()));
+
+        let normalized = dispatcher.normalize(&CodexNotification {
+            method: "thread/tokenUsage/updated".to_owned(),
+            params: json!({
+                "threadId": "thread-1",
+                "tokenUsage": {
+                    "last": {
+                        "cachedInputTokens": 10,
+                        "inputTokens": 23,
+                        "outputTokens": 9,
+                        "reasoningOutputTokens": 4,
+                        "totalTokens": 32
+                    }
+                }
+            }),
+        });
+
+        let usage = match normalized {
+            NormalizedNotification::UsageUpdated { usage } => usage,
+            other => panic!("unexpected normalized event: {other:?}"),
+        };
+
+        assert_eq!(usage.input_tokens, Some(23));
+        assert_eq!(usage.output_tokens, Some(9));
+        assert_eq!(usage.total_tokens, Some(32));
+        assert_eq!(
+            usage.input_details.and_then(|details| details.cache_read),
+            Some(10)
+        );
+        assert_eq!(
+            usage.output_details.and_then(|details| details.reasoning),
+            Some(4)
+        );
     }
 }
