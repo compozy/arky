@@ -1,0 +1,40 @@
+[package]
+name = "arky"
+description = "Arky AI agent SDK - facade crate re-exporting all components"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["claude-code", "codex"]
+claude-code = ["dep:arky-claude-code"]
+codex = ["dep:arky-codex"]
+sqlite = ["arky-session/sqlite"]
+server = ["dep:arky-server"]
+full = ["claude-code", "codex", "sqlite", "server"]
+
+[dependencies]
+arky-error = { workspace = true }
+arky-config = { workspace = true }
+arky-core = { workspace = true }
+arky-hooks = { workspace = true }
+arky-mcp = { workspace = true }
+arky-protocol = { workspace = true }
+arky-provider = { workspace = true }
+arky-session = { workspace = true }
+arky-tools = { workspace = true }
+arky-tools-macros = { workspace = true }
+
+# Optional provider crates
+arky-claude-code = { workspace = true, optional = true }
+arky-codex = { workspace = true, optional = true }
+arky-server = { workspace = true, optional = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true
