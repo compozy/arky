@@ -2,13 +2,14 @@
 /target
 **/*.rs.bk
 Cargo.lock
+.codex/CONTINUITY.md
 
 # IDE
 .idea/
-.vscode/
 *.swp
 *.swo
 *~
+.resources/*
 
 # OS
 .DS_Store

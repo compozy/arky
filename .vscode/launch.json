@@ -1,0 +1,62 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Unit Tests",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--all-features",
+          "--lib",
+          "--package=${input:crate}"
+        ],
+        "filter": {
+          "name": "${input:crate}",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Debug Binary",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "build",
+          "--release",
+          "--package=${input:crate}"
+        ]
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "crate",
+      "description": "Select crate to debug",
+      "type": "pickString",
+      "options": [
+        "arky",
+        "arky-error",
+        "arky-config",
+        "arky-core",
+        "arky-claude-code",
+        "arky-codex",
+        "arky-hooks",
+        "arky-mcp",
+        "arky-protocol",
+        "arky-provider",
+        "arky-server",
+        "arky-session",
+        "arky-tools",
+        "arky-tools-macros"
+      ]
+    }
+  ]
+}
