@@ -23,6 +23,38 @@ use crate::{
     TurnId,
 };
 
+/// Requested reasoning budget or depth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningEffort {
+    /// Minimal reasoning budget.
+    Low,
+    /// Default reasoning budget.
+    Medium,
+    /// Higher reasoning budget.
+    High,
+    /// Extended reasoning budget.
+    XHigh,
+}
+
+/// Normalized finish reason reported by a provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FinishReason {
+    /// Provider stopped normally.
+    Stop,
+    /// Output terminated due to length or token limits.
+    Length,
+    /// Completion paused for a tool call.
+    ToolUse,
+    /// Completion stopped due to content filtering.
+    ContentFilter,
+    /// Provider terminated with an error.
+    Error,
+    /// Provider returned an unknown finish reason.
+    Unknown,
+}
+
 /// Token accounting details for prompt-side usage.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct InputTokenDetails {
@@ -311,6 +343,9 @@ pub struct ProviderSettings {
     /// Stop sequences requested by the caller.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop_sequences: Vec<String>,
+    /// Requested reasoning effort for capable providers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
     /// Provider-specific extension payload.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, Value>,
@@ -435,7 +470,7 @@ pub struct GenerateResponse {
     pub message: Message,
     /// Provider finish reason, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub finish_reason: Option<String>,
+    pub finish_reason: Option<FinishReason>,
     /// Token usage reported by the provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<Usage>,
@@ -460,8 +495,8 @@ impl GenerateResponse {
 
     /// Stores a provider finish reason.
     #[must_use]
-    pub fn with_finish_reason(mut self, finish_reason: impl Into<String>) -> Self {
-        self.finish_reason = Some(finish_reason.into());
+    pub const fn with_finish_reason(mut self, finish_reason: FinishReason) -> Self {
+        self.finish_reason = Some(finish_reason);
         self
     }
 
@@ -556,4 +591,127 @@ impl AgentResponse {
 
 fn duration_to_millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    use super::{
+        FinishReason,
+        GenerateResponse,
+        HookContext,
+        ModelRef,
+        ProviderRequest,
+        ProviderSettings,
+        ReasoningEffort,
+        SessionRef,
+        ToolContext,
+        ToolDefinition,
+        TurnContext,
+    };
+    use crate::{
+        Message,
+        ProviderId,
+        ReplayCursor,
+        SessionId,
+        ToolCall,
+        TurnId,
+    };
+
+    #[test]
+    fn provider_request_should_support_full_context_population() {
+        let session_id = SessionId::new();
+        let turn_id = TurnId::new();
+        let tool_call = ToolCall::new(
+            "call-1",
+            "mcp/files/read_file",
+            json!({
+                "path": "Cargo.toml",
+            }),
+        );
+        let request = ProviderRequest::new(
+            SessionRef::new(Some(session_id.clone()))
+                .with_provider_session_id("provider-session")
+                .with_replay_cursor(ReplayCursor::from_checkpoint(11)),
+            TurnContext::new(turn_id.clone(), 3).with_parent_id(TurnId::new()),
+            ModelRef::new("gpt-5")
+                .with_provider_id(ProviderId::new("codex"))
+                .with_provider_model_id("gpt-5-high"),
+            vec![Message::system("system"), Message::user("hello")],
+        )
+        .with_tools(
+            ToolContext::new()
+                .with_definitions(vec![ToolDefinition::new(
+                    "mcp/files/read_file",
+                    "Read a file",
+                    json!({
+                        "type": "object",
+                        "properties": {
+                            "path": { "type": "string" }
+                        },
+                        "required": ["path"],
+                    }),
+                )])
+                .with_active_calls(vec![tool_call.clone()])
+                .call_scoped(true),
+        )
+        .with_hooks(
+            HookContext::new()
+                .with_metadata(BTreeMap::from([("mode".to_owned(), json!("strict"))])),
+        )
+        .with_settings({
+            let mut settings = ProviderSettings::new();
+            settings.temperature = Some(0.2);
+            settings.max_tokens = Some(1_024);
+            settings.stop_sequences = vec!["STOP".to_owned()];
+            settings.reasoning_effort = Some(ReasoningEffort::Medium);
+            settings.extra = BTreeMap::from([("reasoning".to_owned(), json!("medium"))]);
+            settings
+        });
+
+        assert_eq!(request.session.id, Some(session_id));
+        assert_eq!(request.turn.id, turn_id);
+        assert_eq!(request.tools.active_calls, vec![tool_call]);
+        assert_eq!(request.hooks.metadata.get("mode"), Some(&json!("strict")));
+        assert_eq!(request.settings.max_tokens, Some(1_024));
+        assert_eq!(
+            request.settings.reasoning_effort,
+            Some(ReasoningEffort::Medium)
+        );
+    }
+
+    #[test]
+    fn finish_reason_and_reasoning_effort_should_support_serde_round_trip() {
+        let finish_reason = FinishReason::ToolUse;
+        let reasoning_effort = ReasoningEffort::XHigh;
+
+        let finish_json = serde_json::to_string(&finish_reason)
+            .expect("finish reason should serialize");
+        let reasoning_json = serde_json::to_string(&reasoning_effort)
+            .expect("reasoning effort should serialize");
+
+        let decoded_finish: FinishReason =
+            serde_json::from_str(&finish_json).expect("finish reason should deserialize");
+        let decoded_reasoning: ReasoningEffort = serde_json::from_str(&reasoning_json)
+            .expect("reasoning effort should deserialize");
+
+        assert_eq!(decoded_finish, FinishReason::ToolUse);
+        assert_eq!(decoded_reasoning, ReasoningEffort::XHigh);
+    }
+
+    #[test]
+    fn generate_response_should_store_typed_finish_reason() {
+        let response = GenerateResponse::new(
+            SessionRef::new(Some(SessionId::new())),
+            TurnContext::new(TurnId::new(), 1),
+            Message::assistant("done"),
+        )
+        .with_finish_reason(FinishReason::Stop);
+
+        assert_eq!(response.finish_reason, Some(FinishReason::Stop));
+    }
 }

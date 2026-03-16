@@ -107,6 +107,7 @@ impl ReplayWriter {
             meta,
             message,
             tool_results,
+            ..
         } = event
         {
             let Some(turn_id) = meta.turn_id.clone() else {
@@ -195,6 +196,7 @@ mod tests {
                     .with_provider_id(ProviderId::new("codex")),
                 message: Message::assistant("done"),
                 tool_results: Vec::new(),
+                usage: None,
             })
             .await
             .expect("event should record");

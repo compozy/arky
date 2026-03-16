@@ -7,6 +7,7 @@ use std::{
 
 use arky_codex::{
     ApprovalMode,
+    CodexProcessConfig,
     CodexProvider,
     CodexProviderConfig,
 };
@@ -53,7 +54,10 @@ fn fixture_provider(tempdir: &TempDir) -> CodexProvider {
             .join("tests/fixtures/fake_codex_app_server.js")
             .display()
             .to_string(),
-        allow_npx: false,
+        process: CodexProcessConfig {
+            allow_npx: false,
+            ..CodexProcessConfig::default()
+        },
         request_timeout: Duration::from_secs(5),
         scheduler_timeout: Duration::from_secs(5),
         approval_mode: ApprovalMode::AutoApprove,

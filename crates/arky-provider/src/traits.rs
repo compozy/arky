@@ -20,7 +20,9 @@ use crate::{
 };
 use arky_protocol::{
     AgentEvent,
+    FinishReason,
     Message,
+    Usage,
 };
 
 /// Standard provider stream type that can surface mid-stream failures in-band.
@@ -62,11 +64,19 @@ pub async fn generate_response_from_stream(
     mut stream: ProviderEventStream,
 ) -> Result<GenerateResponse, ProviderError> {
     let mut terminal_message: Option<Message> = None;
+    let mut finish_reason: Option<FinishReason> = None;
+    let mut usage: Option<Usage> = None;
 
     while let Some(item) = stream.next().await {
         let event = item?;
         if let Some(message) = terminal_message_from_event(&event) {
             terminal_message = Some(message);
+        }
+        if let Some(event_usage) = usage_from_event(&event) {
+            usage = Some(event_usage);
+        }
+        if let Some(event_finish_reason) = finish_reason_from_event(&event) {
+            finish_reason = Some(event_finish_reason);
         }
     }
 
@@ -77,14 +87,23 @@ pub async fn generate_response_from_stream(
         )
     })?;
 
-    Ok(GenerateResponse::new(session, turn, message))
+    let mut response = GenerateResponse::new(session, turn, message);
+    if let Some(finish_reason) = finish_reason {
+        response = response.with_finish_reason(finish_reason);
+    }
+    if let Some(usage) = usage {
+        response = response.with_usage(usage);
+    }
+
+    Ok(response)
 }
 
 pub fn terminal_message_from_event(event: &AgentEvent) -> Option<Message> {
     match event {
-        AgentEvent::TurnEnd { message, .. } | AgentEvent::MessageEnd { message, .. } => {
-            Some(message.clone())
-        }
+        AgentEvent::MessageStart { message, .. }
+        | AgentEvent::MessageUpdate { message, .. }
+        | AgentEvent::TurnEnd { message, .. }
+        | AgentEvent::MessageEnd { message, .. } => Some(message.clone()),
         AgentEvent::AgentEnd { messages, .. } => messages
             .iter()
             .rev()
@@ -92,14 +111,41 @@ pub fn terminal_message_from_event(event: &AgentEvent) -> Option<Message> {
             .cloned(),
         AgentEvent::AgentStart { .. }
         | AgentEvent::TurnStart { .. }
-        | AgentEvent::MessageStart { .. }
-        | AgentEvent::MessageUpdate { .. }
         | AgentEvent::ToolExecutionStart { .. }
         | AgentEvent::ToolExecutionUpdate { .. }
         | AgentEvent::ToolExecutionEnd { .. }
         | AgentEvent::Custom { .. }
         | _ => None,
     }
+}
+
+fn usage_from_event(event: &AgentEvent) -> Option<Usage> {
+    match event {
+        AgentEvent::Custom { payload, .. } => payload
+            .get("usage")
+            .cloned()
+            .and_then(|usage| serde_json::from_value(usage).ok()),
+        _ => None,
+    }
+}
+
+fn finish_reason_from_event(event: &AgentEvent) -> Option<FinishReason> {
+    let value = match event {
+        AgentEvent::Custom { payload, .. } => payload
+            .get("finish_reason")
+            .or_else(|| payload.get("stop_reason"))
+            .and_then(serde_json::Value::as_str),
+        _ => None,
+    }?;
+
+    Some(match value {
+        "end_turn" | "stop" | "stop_sequence" => FinishReason::Stop,
+        "max_tokens" | "length" => FinishReason::Length,
+        "tool_use" | "tool_calls" => FinishReason::ToolUse,
+        "content_filter" => FinishReason::ContentFilter,
+        "error" => FinishReason::Error,
+        _ => FinishReason::Unknown,
+    })
 }
 
 #[cfg(test)]
@@ -112,6 +158,7 @@ mod tests {
     use arky_protocol::{
         AgentEvent,
         EventMetadata,
+        FinishReason,
         Message,
         SessionId,
         SessionRef,
@@ -140,6 +187,45 @@ mod tests {
             .expect("response should be synthesized");
 
         assert_eq!(response.message, message);
+    }
+
+    #[tokio::test]
+    async fn generate_response_from_stream_should_collect_usage_and_finish_reason() {
+        let session = SessionRef::new(Some(SessionId::new()));
+        let turn = TurnContext::new(TurnId::new(), 1);
+        let stream = Box::pin(stream::iter(vec![
+            Ok(AgentEvent::MessageUpdate {
+                meta: EventMetadata::new(1, 1),
+                message: Message::assistant("partial"),
+                delta: arky_protocol::StreamDelta::text("partial"),
+            }),
+            Ok(AgentEvent::Custom {
+                meta: EventMetadata::new(2, 2),
+                event_type: "provider.finish".to_owned(),
+                payload: serde_json::json!({
+                    "finish_reason": "tool_use",
+                    "usage": {
+                        "input_tokens": 5,
+                        "output_tokens": 7,
+                        "total_tokens": 12,
+                    }
+                }),
+            }),
+            Ok(AgentEvent::MessageEnd {
+                meta: EventMetadata::new(3, 3),
+                message: Message::assistant("final"),
+            }),
+        ]));
+
+        let response = generate_response_from_stream(session, turn, stream)
+            .await
+            .expect("response should be synthesized");
+
+        assert_eq!(response.finish_reason, Some(FinishReason::ToolUse));
+        assert_eq!(
+            response.usage.as_ref().and_then(|usage| usage.total_tokens),
+            Some(12)
+        );
     }
 
     #[tokio::test]

@@ -26,6 +26,7 @@ arky-provider = { workspace = true }
 arky-session = { workspace = true }
 arky-tools = { workspace = true }
 arky-tools-macros = { workspace = true }
+arky-usage = { workspace = true }
 
 # Optional provider crates
 arky-claude-code = { workspace = true, optional = true }

@@ -12,6 +12,7 @@ use arky_protocol::ProviderId;
 use tracing::warn;
 
 use crate::{
+    ModelRef,
     Provider,
     ProviderDescriptor,
     ProviderError,
@@ -71,6 +72,71 @@ impl ProviderRegistry {
         read_providers(&self.providers).get(id).cloned()
     }
 
+    /// Infers a provider identifier from a model prefix.
+    #[must_use]
+    pub fn infer_provider_id(&self, model: &str) -> Option<ProviderId> {
+        infer_provider_id(model)
+    }
+
+    /// Resolves a provider using an explicit identifier or model prefix fallback.
+    pub fn resolve(
+        &self,
+        provider_id: Option<&ProviderId>,
+        model: Option<&str>,
+    ) -> Result<Arc<dyn Provider>, ProviderError> {
+        if let Some(provider_id) = provider_id {
+            return self.get(provider_id);
+        }
+
+        if let Some(model) = model
+            && let Some(provider_id) = infer_provider_id(model)
+            && let Some(provider) = self.maybe_get(&provider_id)
+        {
+            return Ok(provider);
+        }
+
+        let provider_ids = {
+            let providers = read_providers(&self.providers);
+            if providers.is_empty() {
+                return Err(ProviderError::protocol_violation(
+                    "cannot resolve a provider because the registry is empty",
+                    None,
+                ));
+            }
+
+            if providers.len() == 1 {
+                return Ok(providers
+                    .values()
+                    .next()
+                    .cloned()
+                    .expect("checked non-empty"));
+            }
+
+            providers
+                .keys()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        Err(ProviderError::protocol_violation(
+            format!(
+                "cannot resolve a provider{} across registered providers: {provider_ids}",
+                model
+                    .map(|model| format!(" for model `{model}`"))
+                    .unwrap_or_default()
+            ),
+            None,
+        ))
+    }
+
+    /// Resolves a provider using a model reference.
+    pub fn resolve_model(
+        &self,
+        model: &ModelRef,
+    ) -> Result<Arc<dyn Provider>, ProviderError> {
+        self.resolve(model.provider_id.as_ref(), Some(model.model_id.as_str()))
+    }
+
     /// Lists descriptors for all registered providers in identifier order.
     #[must_use]
     pub fn list(&self) -> Vec<ProviderDescriptor> {
@@ -89,6 +155,35 @@ impl ProviderRegistry {
     pub fn clear(&self) {
         write_providers(&self.providers).clear();
     }
+}
+
+const DEFAULT_MODEL_PREFIX_MAP: [(&str, &str); 5] = [
+    ("claude-", "claude-code"),
+    ("gpt-", "codex"),
+    ("o1-", "codex"),
+    ("o3-", "codex"),
+    ("codex-", "codex"),
+];
+
+/// Infers a provider identifier from a model prefix using the default map.
+#[must_use]
+pub fn infer_provider_id(model: &str) -> Option<ProviderId> {
+    let normalized = model.trim().to_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    let mut selected: Option<(&str, &str)> = None;
+    for (prefix, provider_id) in DEFAULT_MODEL_PREFIX_MAP {
+        if normalized.starts_with(prefix)
+            && selected
+                .is_none_or(|(selected_prefix, _)| prefix.len() > selected_prefix.len())
+        {
+            selected = Some((prefix, provider_id));
+        }
+    }
+
+    selected.map(|(_, provider_id)| ProviderId::new(provider_id))
 }
 
 fn read_providers(
@@ -129,6 +224,7 @@ mod tests {
         ProviderEventStream,
         ProviderFamily,
         ProviderRequest,
+        infer_provider_id,
     };
     use arky_protocol::ProviderId;
 
@@ -205,5 +301,26 @@ mod tests {
             .expect_err("duplicate should fail");
 
         assert!(matches!(error, ProviderError::ProtocolViolation { .. }));
+    }
+
+    #[test]
+    fn infer_provider_id_should_map_known_model_prefixes() {
+        let inferred = infer_provider_id("claude-3.5-sonnet");
+
+        assert_eq!(inferred, Some(ProviderId::new("claude-code")));
+    }
+
+    #[test]
+    fn provider_registry_should_fallback_to_single_provider_resolution() {
+        let registry = ProviderRegistry::new();
+        registry
+            .register(provider("codex"))
+            .expect("provider should register");
+
+        let resolved = registry
+            .resolve(None, Some("unknown-model"))
+            .expect("single provider should resolve");
+
+        assert_eq!(resolved.descriptor().id, ProviderId::new("codex"));
     }
 }

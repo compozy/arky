@@ -5,10 +5,12 @@ use std::collections::HashMap;
 use arky_protocol::{
     ContentBlock,
     Message,
+    MessageMetadata,
     Role,
     ToolCall,
     ToolContent,
     ToolResult,
+    TurnId,
 };
 use serde_json::{
     Map,
@@ -19,14 +21,16 @@ use serde_json::{
 #[derive(Debug, Clone)]
 pub struct TextAccumulator {
     message: Message,
+    part_id: String,
 }
 
 impl TextAccumulator {
     /// Creates an empty assistant message accumulator.
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             message: Message::new(Role::Assistant, Vec::new()),
+            part_id: TurnId::new().to_string(),
         }
     }
 
@@ -60,6 +64,19 @@ impl TextAccumulator {
     #[must_use]
     pub fn message(&self) -> Message {
         self.message.clone()
+    }
+
+    /// Returns the assembled assistant message tagged with the current part id.
+    #[must_use]
+    pub fn message_with_part_id(&self) -> Message {
+        self.message()
+            .with_metadata(MessageMetadata::new().with_id(self.part_id.clone()))
+    }
+
+    /// Returns the stable identifier associated with the current text part.
+    #[must_use]
+    pub const fn part_id(&self) -> &str {
+        self.part_id.as_str()
     }
 }
 
@@ -230,7 +247,10 @@ fn fallback_tool_result(
 
 #[cfg(test)]
 mod tests {
-    use arky_protocol::ContentBlock;
+    use arky_protocol::{
+        ContentBlock,
+        TurnId,
+    };
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
@@ -245,12 +265,17 @@ mod tests {
         accumulator.push_delta("Hello");
         accumulator.push_delta(" world");
 
-        let message = accumulator.message();
+        let message = accumulator.message_with_part_id();
         assert_eq!(message.content.len(), 1);
         match &message.content[0] {
             ContentBlock::Text { text } => assert_eq!(text, "Hello world"),
             other => panic!("expected text block, got {other:?}"),
         }
+        let metadata = message.metadata.expect("message metadata should exist");
+        assert_eq!(
+            TurnId::parse_str(metadata.id.as_deref().expect("id")).is_ok(),
+            true
+        );
     }
 
     #[test]
@@ -259,7 +284,7 @@ mod tests {
         accumulator.push_delta("Draft");
         accumulator.apply_snapshot("Final");
 
-        let message = accumulator.message();
+        let message = accumulator.message_with_part_id();
         match &message.content[0] {
             ContentBlock::Text { text } => assert_eq!(text, "Final"),
             other => panic!("expected text block, got {other:?}"),

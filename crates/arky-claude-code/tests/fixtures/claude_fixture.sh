@@ -57,11 +57,24 @@ case "$MODE" in
     printf '%s\n' "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1773680400,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"out_of_credits\",\"isUsingOverage\":false},\"session_id\":\"$SESSION_ID\"}"
     printf '%s\n' "{\"type\":\"result\",\"subtype\":\"success\",\"stop_reason\":\"end_turn\",\"is_error\":false,\"usage\":{\"input_tokens\":2,\"output_tokens\":8,\"cache_read_input_tokens\":0,\"cache_creation_input_tokens\":0},\"session_id\":\"$SESSION_ID\"}"
     ;;
+  nested_preview)
+    printf '%s\n' "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"$SESSION_ID\"}"
+    printf '%s\n' "{\"type\":\"assistant\",\"session_id\":\"$SESSION_ID\",\"parent_tool_use_id\":null,\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"parent-1\",\"name\":\"Task\",\"input\":{}}]}}"
+    printf '%s\n' "{\"type\":\"assistant\",\"session_id\":\"$SESSION_ID\",\"parent_tool_use_id\":\"parent-1\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"child-1\",\"name\":\"Read\",\"input\":{\"path\":\"README.md\"},\"parent_tool_use_id\":\"parent-1\"}]}}"
+    printf '%s\n' "{\"type\":\"user\",\"session_id\":\"$SESSION_ID\",\"parent_tool_use_id\":\"parent-1\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"child-1\",\"name\":\"Read\",\"content\":[{\"type\":\"text\",\"text\":\"child-result\"}],\"is_error\":false}]}}"
+    printf '%s\n' "{\"type\":\"user\",\"session_id\":\"$SESSION_ID\",\"parent_tool_use_id\":null,\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"parent-1\",\"name\":\"Task\",\"content\":[{\"type\":\"text\",\"text\":\"parent-result\"}],\"is_error\":false}]}}"
+    printf '%s\n' "{\"type\":\"result\",\"subtype\":\"success\",\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":5,\"output_tokens\":5,\"cache_read_input_tokens\":0,\"cache_creation_input_tokens\":0},\"session_id\":\"$SESSION_ID\"}"
+    ;;
   auth_failed)
     printf '%s\n' "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"$SESSION_ID\"}"
     printf '%s\n' "{\"type\":\"assistant\",\"session_id\":\"$SESSION_ID\",\"parent_tool_use_id\":null,\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Failed to authenticate. API Error: 401 token expired\"}]},\"error\":\"authentication_failed\"}"
     printf '%s\n' "{\"type\":\"result\",\"subtype\":\"success\",\"stop_reason\":\"stop_sequence\",\"is_error\":true,\"result\":\"Failed to authenticate. API Error: 401 token expired\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_read_input_tokens\":0,\"cache_creation_input_tokens\":0},\"session_id\":\"$SESSION_ID\"}"
     exit 1
+    ;;
+  truncated_stream)
+    printf '%s\n' "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"$SESSION_ID\"}"
+    printf '%s\n' "{\"type\":\"assistant\",\"session_id\":\"$SESSION_ID\",\"parent_tool_use_id\":null,\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"$(printf 'x%.0s' $(seq 1 600))\"}]}}"
+    printf '%s\n' "{\"type\":\"assistant\",\"session_id\":\"$SESSION_ID\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"unterminated}"
     ;;
   malformed)
     printf '%s\n' "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"$SESSION_ID\"}"

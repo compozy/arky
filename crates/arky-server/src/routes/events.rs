@@ -18,13 +18,18 @@ use axum::{
         Sse,
     },
 };
-use serde_json::json;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::{
     ServerError,
     ServerState,
     middleware::parse_session_id,
+    routes::sse::{
+        SseSequence,
+        agent_event_frame,
+        done_event_frame,
+        payload_event_frame,
+    },
 };
 
 /// Streams live events for an active session as SSE.
@@ -37,6 +42,7 @@ pub async fn stream_session_events(
     let mut subscription = state.agent().subscribe();
 
     let stream = stream! {
+        let mut sequence = SseSequence::new();
         loop {
             match subscription.recv().await {
                 Ok(event) => {
@@ -44,40 +50,40 @@ pub async fn stream_session_events(
                         continue;
                     }
 
-                    let payload = match serde_json::to_string(&event) {
-                        Ok(payload) => payload,
+                    match agent_event_frame(&mut sequence, &event) {
+                        Ok(frame) => yield Ok(frame),
                         Err(error) => {
-                            let error_payload = json!({
-                                "type": "stream_error",
-                                "message": format!("failed to serialize event: {error}"),
-                            })
-                            .to_string();
-                            yield Ok(Event::default().event("error").data(error_payload));
+                            yield Ok(payload_event_frame(
+                                &mut sequence,
+                                "error",
+                                &serde_json::json!({
+                                    "type": "stream_error",
+                                    "code": "SERVER_SSE_SERIALIZATION_FAILED",
+                                    "message": format!("failed to serialize event: {error}"),
+                                }),
+                            ));
                             break;
                         }
-                    };
-
-                    yield Ok(
-                        Event::default()
-                            .event(event_name(&event))
-                            .id(event.sequence().to_string())
-                            .data(payload),
-                    );
+                    }
                     if matches!(event, AgentEvent::AgentEnd { .. }) {
                         break;
                     }
                 }
                 Err(RecvError::Lagged(skipped)) => {
-                    let payload = json!({
-                        "type": "lagged",
-                        "skipped": skipped,
-                    })
-                    .to_string();
-                    yield Ok(Event::default().event("warning").data(payload));
+                    yield Ok(payload_event_frame(
+                        &mut sequence,
+                        "warning",
+                        &serde_json::json!({
+                            "type": "lagged",
+                            "skipped": skipped,
+                        }),
+                    ));
                 }
                 Err(RecvError::Closed) => break,
             }
         }
+
+        yield Ok(done_event_frame(&mut sequence));
     };
 
     Ok(Sse::new(stream).keep_alive(
@@ -85,21 +91,4 @@ pub async fn stream_session_events(
             .interval(Duration::from_secs(10))
             .text("keep-alive"),
     ))
-}
-
-const fn event_name(event: &AgentEvent) -> &'static str {
-    match event {
-        AgentEvent::AgentStart { .. } => "agent_start",
-        AgentEvent::AgentEnd { .. } => "agent_end",
-        AgentEvent::TurnStart { .. } => "turn_start",
-        AgentEvent::TurnEnd { .. } => "turn_end",
-        AgentEvent::MessageStart { .. } => "message_start",
-        AgentEvent::MessageUpdate { .. } => "message_update",
-        AgentEvent::MessageEnd { .. } => "message_end",
-        AgentEvent::ToolExecutionStart { .. } => "tool_execution_start",
-        AgentEvent::ToolExecutionUpdate { .. } => "tool_execution_update",
-        AgentEvent::ToolExecutionEnd { .. } => "tool_execution_end",
-        AgentEvent::Custom { .. } => "custom",
-        _ => "unknown",
-    }
 }

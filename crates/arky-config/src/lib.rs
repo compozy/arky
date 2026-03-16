@@ -8,6 +8,7 @@ mod error;
 mod loader;
 mod merge;
 mod validate;
+mod validation;
 
 pub use crate::{
     error::{
@@ -27,4 +28,8 @@ pub use crate::{
         WorkspaceConfigBuilder,
     },
     validate::find_binary_on_path,
+    validation::{
+        RichValidationSchema,
+        validate_against_schema,
+    },
 };

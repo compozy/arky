@@ -5,12 +5,20 @@
 //! primitives needed by the higher-level Arky runtime.
 
 mod accumulator;
+mod app_server;
 mod approval;
+mod config;
+mod dedup;
+mod dispatcher;
+mod model_service;
 mod notification;
+mod pipeline;
 mod provider;
+mod registry;
 mod rpc;
 mod scheduler;
 mod thread;
+mod tool_payloads;
 
 pub use crate::{
     accumulator::{
@@ -18,11 +26,33 @@ pub use crate::{
         ToolRuntimeState,
         ToolTracker,
     },
+    app_server::CodexAppServer,
     approval::{
         ApprovalDecision,
         ApprovalHandler,
         ApprovalMode,
         ApprovalRequest,
+    },
+    config::{
+        CodexCapabilityConfig,
+        CodexProcessConfig,
+        CodexProviderConfig,
+        CodexSandboxConfig,
+        CodexSandboxExclusions,
+        CodexWorkspaceConfig,
+    },
+    dedup::{
+        FingerprintDeduper,
+        fingerprint_notification,
+    },
+    dispatcher::{
+        CodexEventDispatcher,
+        NormalizedNotification,
+    },
+    model_service::{
+        CodexModelDescriptor,
+        CodexModelService,
+        ModelListPage,
     },
     notification::{
         CodexNotification,
@@ -30,9 +60,14 @@ pub use crate::{
         extract_scope_id_from_value,
         extract_thread_id_from_value,
     },
-    provider::{
-        CodexProvider,
-        CodexProviderConfig,
+    pipeline::{
+        CodexStreamPipeline,
+        CodexStreamState,
+    },
+    provider::CodexProvider,
+    registry::{
+        CodexServerLease,
+        CodexServerRegistry,
     },
     rpc::{
         CodexServerRequest,
@@ -50,10 +85,17 @@ pub use crate::{
         SchedulerPermit,
     },
     thread::{
+        CompactThreadParams,
         ThreadManager,
         ThreadOpenParams,
         ThreadStartResult,
         TurnNotificationStream,
         TurnStartParams,
+    },
+    tool_payloads::{
+        build_tool_input_payload,
+        build_tool_result_payload,
+        canonical_tool_name,
+        payload_has_error,
     },
 };

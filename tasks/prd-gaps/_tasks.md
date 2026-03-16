@@ -62,9 +62,9 @@
 
 ## Tasks
 
-- [ ] 1.0 Phase 1 (P0): Production Blockers — Error Classifier, Protocol Types, Usage Crate, Provider P0s, Server P0 (complexity: critical)
-- [ ] 2.0 Phase 2 (P1): Important Completeness — Provider Enhancements, Tool Truncation, Claude Code P1, Codex P1, Core Integration, Server/Session P1 (complexity: critical)
-- [ ] 3.0 Phase 3 (P2): Polish — Claude Code P2, Codex P2, Cross-Cutting P2 (complexity: high)
+- [x] 1.0 Phase 1 (P0): Production Blockers — Error Classifier, Protocol Types, Usage Crate, Provider P0s, Server P0 (complexity: critical)
+- [x] 2.0 Phase 2 (P1): Important Completeness — Provider Enhancements, Tool Truncation, Claude Code P1, Codex P1, Core Integration, Server/Session P1 (complexity: critical)
+- [x] 3.0 Phase 3 (P2): Polish — Claude Code P2, Codex P2, Cross-Cutting P2 (complexity: high)
 
 ## Task Design Rules
 
@@ -114,4 +114,4 @@ Notes:
 - [ ] Batch 4 — P1 Foundation: Provider Enhancements, Tool Truncation
 - [ ] Batch 5 — P1 Providers: Claude Code P1, Codex P1
 - [ ] Batch 6 — P1 Integration: Core, Server/Session
-- [ ] Batch 7 — P2 Polish: Claude Code P2, Codex P2, Cross-cutting P2
+- [x] Batch 7 — P2 Polish: Claude Code P2, Codex P2, Cross-cutting P2

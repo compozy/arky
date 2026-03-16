@@ -2,7 +2,6 @@
 
 use std::{
     collections::BTreeMap,
-    path::PathBuf,
     sync::Arc,
     time::{
         SystemTime,
@@ -49,19 +48,26 @@ use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    cooldown::{
-        SpawnFailurePolicy,
-        SpawnFailureTracker,
+    ClaudeCodeProviderConfig,
+    ClaudeErrorClassifier,
+    config::{
+        validate_claude_model_id,
+        validate_prompt_length,
+        validate_session_id_format,
     },
+    conversion::collect_warning_messages,
+    cooldown::SpawnFailureTracker,
     dedup::{
         TextDeduplicator,
         TextSource,
     },
+    generate::generate_with_recovery,
     nested::NestedToolTracker,
     parser::{
         ClaudeEventParser,
         ClaudeEventSource,
         ClaudeNormalizedEvent,
+        is_claude_truncation_error,
     },
     session::SessionManager,
     tool_fsm::{
@@ -69,42 +75,6 @@ use crate::{
         ToolLifecycleTracker,
     },
 };
-
-/// Runtime configuration for the Claude Code provider.
-#[derive(Debug, Clone)]
-pub struct ClaudeCodeProviderConfig {
-    /// Binary name or path used for Claude invocations.
-    pub binary: String,
-    /// Optional working directory for the Claude subprocess.
-    pub cwd: Option<PathBuf>,
-    /// Extra CLI arguments added before request-specific flags.
-    pub extra_args: Vec<String>,
-    /// Environment overrides applied to Claude subprocesses.
-    pub env: BTreeMap<String, String>,
-    /// Arguments used to query the binary version.
-    pub version_args: Vec<String>,
-    /// Whether `--verbose` should be added to Claude invocations.
-    pub verbose: bool,
-    /// Maximum line length accepted from Claude stdout.
-    pub max_frame_len: usize,
-    /// Spawn-failure cooldown policy.
-    pub spawn_failure_policy: SpawnFailurePolicy,
-}
-
-impl Default for ClaudeCodeProviderConfig {
-    fn default() -> Self {
-        Self {
-            binary: "claude".to_owned(),
-            cwd: None,
-            extra_args: Vec::new(),
-            env: BTreeMap::new(),
-            version_args: vec!["--version".to_owned()],
-            verbose: true,
-            max_frame_len: 256 * 1024,
-            spawn_failure_policy: SpawnFailurePolicy::default(),
-        }
-    }
-}
 
 /// Concrete `Provider` implementation wrapping the Claude CLI.
 #[derive(Clone)]
@@ -114,6 +84,7 @@ pub struct ClaudeCodeProvider {
     sessions: SessionManager,
     cooldown: SpawnFailureTracker,
     codec: Arc<dyn ToolIdCodec>,
+    classifier: ClaudeErrorClassifier,
     validated_version: Arc<tokio::sync::Mutex<Option<String>>>,
 }
 
@@ -142,6 +113,7 @@ impl ClaudeCodeProvider {
             config,
             sessions: SessionManager::new(),
             codec: Arc::new(create_claude_code_tool_id_codec()),
+            classifier: ClaudeErrorClassifier::new(),
             validated_version: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
@@ -167,6 +139,11 @@ impl ClaudeCodeProvider {
                 "failed to read Claude version output: {error}"
             ))
         })?;
+        if let Some(callback) = &self.config.cli_behavior.stderr_callback
+            && !stderr_buffer.trim().is_empty()
+        {
+            callback.call(stderr_buffer.trim());
+        }
         process.wait().await?;
 
         let version = stdout_buffer.trim();
@@ -190,7 +167,7 @@ impl ClaudeCodeProvider {
         if let Some(cwd) = &self.config.cwd {
             config = config.with_cwd(cwd.clone());
         }
-        for (key, value) in &self.config.env {
+        for (key, value) in merged_env_layers(None, &self.config.env) {
             config = config.with_env(key.clone(), value.clone());
         }
         config
@@ -201,28 +178,16 @@ impl ClaudeCodeProvider {
         request: &ProviderRequest,
     ) -> Result<ProcessConfig, ProviderError> {
         let prompt = render_prompt(request);
-        let mut args = self.config.extra_args.clone();
-        // Claude's `--output-format stream-json` currently requires `--verbose`.
-        if self.config.verbose || !args.iter().any(|arg| arg == "--verbose") {
-            args.push("--verbose".to_owned());
-        }
-        args.push("--print".to_owned());
-        args.push(prompt);
-        args.push("--output-format".to_owned());
-        args.push("stream-json".to_owned());
-        args.push("--model".to_owned());
-        args.push(
+        let session_id = self.sessions.resolve(&request.session).await;
+        let args = self.config.cli_args(
+            prompt,
             request
                 .model
                 .provider_model_id
                 .clone()
                 .unwrap_or_else(|| request.model.model_id.clone()),
-        );
-
-        if let Some(session_id) = self.sessions.resolve(&request.session).await {
-            args.push("--session-id".to_owned());
-            args.push(session_id);
-        }
+            session_id.as_deref(),
+        )?;
 
         let mut config = ProcessConfig::new(&self.config.binary)
             .with_args(args)
@@ -230,7 +195,8 @@ impl ClaudeCodeProvider {
         if let Some(cwd) = &self.config.cwd {
             config = config.with_cwd(cwd.clone());
         }
-        for (key, value) in &self.config.env {
+        let request_env = request_env_overrides(&request.settings.extra);
+        for (key, value) in merged_env_layers(Some(&request_env), &self.config.env) {
             config = config.with_env(key.clone(), value.clone());
         }
         Ok(config)
@@ -253,6 +219,15 @@ impl ClaudeCodeProvider {
         let provider = self.clone();
         let descriptor = self.descriptor.clone();
         let sessions = self.sessions.clone();
+        let error_classifier = self.classifier.clone();
+        let binary = self.config.binary.clone();
+        let stderr_callback = self.config.cli_behavior.stderr_callback.clone();
+        let prompt = render_prompt(&request);
+        let request_warnings = collect_request_warnings(
+            &request,
+            &prompt,
+            request.session.provider_session_id.as_deref(),
+        );
 
         let stream: ProviderEventStream = Box::pin(try_stream! {
             let stderr_task = tokio::spawn(async move {
@@ -266,11 +241,27 @@ impl ClaudeCodeProvider {
             let mut parser = ClaudeEventParser::new();
             let mut runtime =
                 StreamRuntime::new(&request, descriptor.id.clone(), provider, sessions);
+            let mut recovered_from_truncation = false;
 
             yield runtime.turn_start();
+            for warning in request_warnings {
+                yield runtime.warning_event(&warning);
+            }
 
             while let Some(line) = transport.recv_frame(cancel.child_token()).await? {
-                let normalized_events = parser.parse_line(&line)?;
+                let normalized_events = match parser.parse_line(&line) {
+                    Ok(events) => events,
+                    Err(error)
+                        if is_claude_truncation_error(&error, runtime.buffered_text()) =>
+                    {
+                        for emitted in runtime.recover_from_truncation(&error) {
+                            yield emitted;
+                        }
+                        recovered_from_truncation = true;
+                        break;
+                    }
+                    Err(error) => Err(error)?,
+                };
                 for event in normalized_events {
                     for emitted in runtime.handle_event(event).await? {
                         yield emitted;
@@ -280,29 +271,22 @@ impl ClaudeCodeProvider {
 
             drop(transport);
             let stderr_excerpt = stderr_task.await.unwrap_or_default();
-            let terminal_error = runtime.terminal_error();
-            match process.wait().await {
-                Ok(_) if runtime.finished() && terminal_error.is_none() => {}
-                Ok(_) if terminal_error.is_some() => Err(terminal_error.expect("checked is_some"))?,
-                Ok(_) => Err(ProviderError::protocol_violation(
-                    "Claude stream ended without a terminal finish event",
-                    Some(json!({
-                        "stderr": stderr_excerpt.trim(),
-                    })),
-                ))?,
-                Err(ProviderError::ProcessCrashed { .. }) if terminal_error.is_some() => {
-                    Err(terminal_error.expect("checked is_some"))?
-                }
-                Err(ProviderError::ProcessCrashed { command, exit_code, .. }) => {
-                    Err(ProviderError::process_crashed(
-                        command,
-                        exit_code,
-                        (!stderr_excerpt.trim().is_empty())
-                            .then(|| stderr_excerpt.trim().to_owned()),
-                    ))?
-                }
-                Err(error) => Err(error)?,
+            if let Some(callback) = &stderr_callback
+                && !stderr_excerpt.trim().is_empty()
+            {
+                callback.call(stderr_excerpt.trim());
             }
+            if recovered_from_truncation {
+                let _ = process.graceful_shutdown().await;
+                return;
+            }
+            finish_stream_process(
+                &mut process,
+                &runtime,
+                &error_classifier,
+                &binary,
+                &stderr_excerpt,
+            ).await?;
         });
 
         Ok(stream)
@@ -346,6 +330,13 @@ impl Provider for ClaudeCodeProvider {
         );
 
         self.build_stream(request, process, transport)
+    }
+
+    async fn generate(
+        &self,
+        request: ProviderRequest,
+    ) -> Result<arky_provider::GenerateResponse, ProviderError> {
+        generate_with_recovery(self, request).await
     }
 }
 
@@ -403,6 +394,33 @@ fn render_prompt(request: &ProviderRequest) -> String {
     prompt
 }
 
+fn collect_request_warnings(
+    request: &ProviderRequest,
+    prompt: &str,
+    runtime_session_id: Option<&str>,
+) -> Vec<String> {
+    let mut warnings = collect_warning_messages(&request.settings);
+    let model_id = request
+        .model
+        .provider_model_id
+        .as_deref()
+        .unwrap_or(&request.model.model_id);
+
+    if let Some(warning) = validate_claude_model_id(model_id) {
+        warnings.push(warning);
+    }
+    if let Some(warning) = validate_prompt_length(prompt) {
+        warnings.push(warning);
+    }
+    if let Some(session_id) = runtime_session_id
+        && let Some(warning) = validate_session_id_format(session_id)
+    {
+        warnings.push(warning);
+    }
+
+    warnings
+}
+
 fn tool_contents_to_text(content: &[ToolContent]) -> String {
     content
         .iter()
@@ -441,6 +459,33 @@ fn parse_json_or_string(input: &str) -> Value {
         .unwrap_or_else(|_| Value::String(input.to_owned()))
 }
 
+fn request_env_overrides(extra: &BTreeMap<String, Value>) -> BTreeMap<String, String> {
+    extra
+        .get("env")
+        .and_then(Value::as_object)
+        .map(|record| {
+            record
+                .iter()
+                .filter_map(|(key, value)| {
+                    value.as_str().map(|value| (key.clone(), value.to_owned()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn merged_env_layers(
+    user_env: Option<&BTreeMap<String, String>>,
+    provider_env: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut merged = std::env::vars().collect::<BTreeMap<_, _>>();
+    if let Some(user_env) = user_env {
+        merged.extend(user_env.clone());
+    }
+    merged.extend(provider_env.clone());
+    merged
+}
+
 fn current_tool_name(tool_fsm: &ToolLifecycleTracker, tool_call_id: &str) -> String {
     match tool_fsm.state(tool_call_id) {
         ToolLifecycleState::Started { tool_name }
@@ -451,12 +496,24 @@ fn current_tool_name(tool_fsm: &ToolLifecycleTracker, tool_call_id: &str) -> Str
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct NestedPreviewEntry {
+    tool_name: String,
+    state: &'static str,
+    input: Value,
+    output: Option<Value>,
+    error: Option<Value>,
+}
+
 struct StreamRuntime {
     provider: ClaudeCodeProvider,
     sessions: SessionManager,
     tool_fsm: ToolLifecycleTracker,
     deduplicator: TextDeduplicator,
+    reasoning_text: BTreeMap<String, String>,
     nested_tools: NestedToolTracker,
+    nested_preview_state: BTreeMap<String, BTreeMap<String, NestedPreviewEntry>>,
+    preview_signatures: BTreeMap<String, String>,
     tool_results: Vec<ToolResult>,
     emitter: EventEmitter,
     current_message: Message,
@@ -477,7 +534,10 @@ impl StreamRuntime {
             sessions,
             tool_fsm: ToolLifecycleTracker::new(),
             deduplicator: TextDeduplicator::new(),
+            reasoning_text: BTreeMap::new(),
             nested_tools: NestedToolTracker::new(),
+            nested_preview_state: BTreeMap::new(),
+            preview_signatures: BTreeMap::new(),
             tool_results: Vec::new(),
             emitter: EventEmitter::new(request, provider_id),
             current_message: Message::new(Role::Assistant, Vec::new()),
@@ -493,12 +553,53 @@ impl StreamRuntime {
         }
     }
 
+    fn warning_event(&mut self, warning: &str) -> AgentEvent {
+        AgentEvent::Custom {
+            meta: self.emitter.next(),
+            event_type: "claude_code.warning".to_owned(),
+            payload: json!({
+                "message": warning,
+            }),
+        }
+    }
+
     const fn finished(&self) -> bool {
         self.finished
     }
 
     fn terminal_error(&self) -> Option<ProviderError> {
         self.terminal_error.clone()
+    }
+
+    fn buffered_text(&self) -> String {
+        assistant_message_text(&self.current_message)
+    }
+
+    fn recover_from_truncation(&mut self, error: &ProviderError) -> Vec<AgentEvent> {
+        let mut emitted = Vec::new();
+        self.finished = true;
+        self.ensure_message_started(&mut emitted);
+        emitted.push(AgentEvent::MessageEnd {
+            meta: self.emitter.next(),
+            message: self.current_message.clone(),
+        });
+        emitted.push(AgentEvent::TurnEnd {
+            meta: self.emitter.next(),
+            message: self.current_message.clone(),
+            tool_results: self.tool_results.clone(),
+            usage: None,
+        });
+        emitted.push(AgentEvent::Custom {
+            meta: self.emitter.next(),
+            event_type: "claude_code.stream_retry_marker".to_owned(),
+            payload: json!({
+                "retry_suggested": true,
+                "reason": "truncated_stream",
+                "error": error.to_string(),
+                "partial_text": self.buffered_text(),
+            }),
+        });
+        emitted
     }
 
     async fn handle_event(
@@ -513,6 +614,15 @@ impl StreamRuntime {
                 self.handle_rate_limit(rate_limit).await
             }
             ClaudeNormalizedEvent::TextDelta(text) => Ok(self.handle_text_delta(&text)),
+            ClaudeNormalizedEvent::ReasoningStart(reasoning) => {
+                Ok(self.handle_reasoning_start(reasoning))
+            }
+            ClaudeNormalizedEvent::ReasoningDelta(reasoning) => {
+                Ok(self.handle_reasoning_delta(reasoning))
+            }
+            ClaudeNormalizedEvent::ReasoningComplete(reasoning) => {
+                Ok(self.handle_reasoning_complete(reasoning))
+            }
             ClaudeNormalizedEvent::ToolUseStart(tool) => self.handle_tool_use_start(tool),
             ClaudeNormalizedEvent::ToolUseInputDelta(input) => {
                 self.handle_tool_use_input_delta(input)
@@ -611,21 +721,122 @@ impl StreamRuntime {
         emitted
     }
 
+    fn handle_reasoning_start(
+        &mut self,
+        reasoning: crate::parser::ClaudeReasoningStartEvent,
+    ) -> Vec<AgentEvent> {
+        self.reasoning_text
+            .entry(reasoning.reasoning_id.clone())
+            .or_default();
+        vec![AgentEvent::ReasoningStart {
+            meta: self.emitter.next(),
+            reasoning_id: reasoning.reasoning_id,
+        }]
+    }
+
+    fn handle_reasoning_delta(
+        &mut self,
+        reasoning: crate::parser::ClaudeReasoningDeltaEvent,
+    ) -> Vec<AgentEvent> {
+        self.reasoning_text
+            .entry(reasoning.reasoning_id.clone())
+            .or_default()
+            .push_str(&reasoning.text);
+        vec![AgentEvent::ReasoningDelta {
+            meta: self.emitter.next(),
+            reasoning_id: reasoning.reasoning_id,
+            delta: reasoning.text,
+        }]
+    }
+
+    fn handle_reasoning_complete(
+        &mut self,
+        reasoning: crate::parser::ClaudeReasoningCompleteEvent,
+    ) -> Vec<AgentEvent> {
+        let full_text = if reasoning.full_text.is_empty() {
+            self.reasoning_text
+                .remove(&reasoning.reasoning_id)
+                .unwrap_or_default()
+        } else {
+            self.reasoning_text.remove(&reasoning.reasoning_id);
+            reasoning.full_text
+        };
+
+        vec![AgentEvent::ReasoningComplete {
+            meta: self.emitter.next(),
+            reasoning_id: reasoning.reasoning_id,
+            full_text,
+        }]
+    }
+
+    fn emit_nested_preview(&mut self, parent_tool_call_id: &str) -> Option<AgentEvent> {
+        let tool_calls = self
+            .nested_preview_state
+            .get(parent_tool_call_id)?
+            .iter()
+            .map(|(tool_call_id, entry)| {
+                json!({
+                    "id": tool_call_id,
+                    "tool": entry.tool_name,
+                    "state": entry.state,
+                    "input": entry.input,
+                    "output": entry.output,
+                    "error": entry.error,
+                })
+            })
+            .collect::<Vec<_>>();
+        let payload = json!({
+            "preliminary": true,
+            "toolCalls": tool_calls,
+        });
+        let signature = serde_json::to_string(&payload).ok()?;
+        if self
+            .preview_signatures
+            .get(parent_tool_call_id)
+            .is_some_and(|previous| previous == &signature)
+        {
+            return None;
+        }
+        self.preview_signatures
+            .insert(parent_tool_call_id.to_owned(), signature);
+
+        Some(AgentEvent::ToolExecutionUpdate {
+            meta: self.emitter.next(),
+            tool_call_id: parent_tool_call_id.to_owned(),
+            tool_name: current_tool_name(&self.tool_fsm, parent_tool_call_id),
+            partial_result: payload,
+        })
+    }
+
     fn handle_tool_use_start(
         &mut self,
         tool: crate::parser::ClaudeToolUseStartEvent,
     ) -> Result<Vec<AgentEvent>, ProviderError> {
         let mut emitted = Vec::new();
+        let parent_tool_call_id = tool.parent_tool_call_id.clone();
         self.ensure_message_started(&mut emitted);
         self.deduplicator.reset();
         self.tool_fsm.start(&tool.tool_call_id, &tool.tool_name)?;
-        if let Some(parent_tool_call_id) = &tool.parent_tool_call_id {
+        if let Some(parent_tool_call_id) = &parent_tool_call_id {
             self.nested_tools.register_start(
                 parent_tool_call_id,
                 &tool.tool_call_id,
                 &tool.tool_name,
                 tool.input.clone(),
             );
+            self.nested_preview_state
+                .entry(parent_tool_call_id.clone())
+                .or_default()
+                .insert(
+                    tool.tool_call_id.clone(),
+                    NestedPreviewEntry {
+                        tool_name: self.provider.canonical_tool_name(&tool.tool_name),
+                        state: "running",
+                        input: tool.input.clone(),
+                        output: None,
+                        error: None,
+                    },
+                );
         }
 
         emitted.push(AgentEvent::ToolExecutionStart {
@@ -634,6 +845,11 @@ impl StreamRuntime {
             tool_name: self.provider.canonical_tool_name(&tool.tool_name),
             args: tool.input,
         });
+        if let Some(parent_tool_call_id) = parent_tool_call_id
+            && let Some(preview) = self.emit_nested_preview(&parent_tool_call_id)
+        {
+            emitted.push(preview);
+        }
         Ok(emitted)
     }
 
@@ -708,6 +924,42 @@ impl StreamRuntime {
         self.deduplicator.reset();
         self.tool_fsm.result(&tool.tool_call_id, !tool.is_error)?;
         let canonical_tool_name = self.provider.canonical_tool_name(&tool.tool_name);
+        let mut emitted = Vec::new();
+        if let Some(parent_tool_call_id) = &tool.parent_tool_call_id {
+            let previous_entry = self
+                .nested_preview_state
+                .get(parent_tool_call_id)
+                .and_then(|entries| entries.get(&tool.tool_call_id));
+            let previous_input = previous_entry
+                .cloned()
+                .unwrap_or_else(|| NestedPreviewEntry {
+                    tool_name: String::new(),
+                    state: "running",
+                    input: Value::Null,
+                    output: None,
+                    error: None,
+                })
+                .input;
+            self.nested_preview_state
+                .entry(parent_tool_call_id.clone())
+                .or_default()
+                .insert(
+                    tool.tool_call_id.clone(),
+                    NestedPreviewEntry {
+                        tool_name: canonical_tool_name.clone(),
+                        state: if tool.is_error { "error" } else { "completed" },
+                        input: previous_input,
+                        output: (!tool.is_error).then(|| tool.result_json.clone()),
+                        error: tool.is_error.then(|| tool.result_json.clone()),
+                    },
+                );
+            if let Some(preview) = self.emit_nested_preview(parent_tool_call_id) {
+                emitted.push(preview);
+            }
+        } else {
+            self.nested_preview_state.remove(&tool.tool_call_id);
+            self.preview_signatures.remove(&tool.tool_call_id);
+        }
         let result_json = if let Some(parent_tool_call_id) = &tool.parent_tool_call_id {
             self.nested_tools
                 .register_result(parent_tool_call_id, &tool);
@@ -735,13 +987,14 @@ impl StreamRuntime {
             self.tool_results.push(result);
         }
 
-        Ok(vec![AgentEvent::ToolExecutionEnd {
+        emitted.push(AgentEvent::ToolExecutionEnd {
             meta: self.emitter.next(),
             tool_call_id: tool.tool_call_id,
             tool_name: canonical_tool_name,
             result: result_json,
             is_error: tool.is_error,
-        }])
+        });
+        Ok(emitted)
     }
 
     fn handle_finish(
@@ -751,7 +1004,11 @@ impl StreamRuntime {
         let mut emitted = Vec::new();
         self.deduplicator.reset();
         self.finished = true;
-        self.terminal_error = classify_terminal_error(finish, &self.current_message);
+        self.terminal_error = classify_terminal_error(
+            &self.provider.classifier,
+            finish,
+            &self.current_message,
+        );
         self.ensure_message_started(&mut emitted);
         emitted.push(AgentEvent::MessageEnd {
             meta: self.emitter.next(),
@@ -762,6 +1019,7 @@ impl StreamRuntime {
                 meta: self.emitter.next(),
                 message: self.current_message.clone(),
                 tool_results: self.tool_results.clone(),
+                usage: Some(finish.usage.clone()),
             });
         }
         emitted.push(AgentEvent::Custom {
@@ -780,7 +1038,75 @@ impl StreamRuntime {
     }
 }
 
+async fn finish_stream_process(
+    process: &mut ManagedProcess,
+    runtime: &StreamRuntime,
+    error_classifier: &ClaudeErrorClassifier,
+    binary: &str,
+    stderr_excerpt: &str,
+) -> Result<(), ProviderError> {
+    let terminal_error = runtime.terminal_error();
+    match process.wait().await {
+        Ok(_) if runtime.finished() && terminal_error.is_none() => Ok(()),
+        Ok(_) => {
+            if let Some(error) = terminal_error {
+                return Err(error);
+            }
+
+            if stderr_excerpt.trim().is_empty() {
+                return Err(ProviderError::protocol_violation(
+                    "Claude stream ended without a terminal finish event",
+                    Some(json!({
+                        "stderr": stderr_excerpt.trim(),
+                    })),
+                ));
+            }
+
+            let classification = error_classifier.classify(
+                Some(stderr_excerpt.trim()),
+                Some(stderr_excerpt.trim()),
+                None,
+                None,
+            );
+            Err(error_classifier.to_provider_error(
+                &classification,
+                stderr_excerpt.trim().to_owned(),
+                Some(binary),
+                None,
+                Some(stderr_excerpt.trim()),
+            ))
+        }
+        Err(ProviderError::ProcessCrashed {
+            command, exit_code, ..
+        }) => {
+            if let Some(error) = terminal_error {
+                return Err(error);
+            }
+
+            if stderr_excerpt.trim().is_empty() {
+                return Err(ProviderError::process_crashed(&command, exit_code, None));
+            }
+
+            let classification = error_classifier.classify(
+                Some(stderr_excerpt.trim()),
+                Some(stderr_excerpt.trim()),
+                exit_code,
+                None,
+            );
+            Err(error_classifier.to_provider_error(
+                &classification,
+                stderr_excerpt.trim().to_owned(),
+                Some(&command),
+                exit_code,
+                Some(stderr_excerpt.trim()),
+            ))
+        }
+        Err(error) => Err(error),
+    }
+}
+
 fn classify_terminal_error(
+    error_classifier: &ClaudeErrorClassifier,
     finish: &crate::parser::ClaudeFinishEvent,
     message: &Message,
 ) -> Option<ProviderError> {
@@ -793,16 +1119,19 @@ fn classify_terminal_error(
         .clone()
         .unwrap_or_else(|| assistant_message_text(message));
 
-    match finish.error_code.as_deref() {
-        Some("authentication_failed") => Some(ProviderError::auth_failed(detail)),
-        Some(error_code) => Some(ProviderError::protocol_violation(
-            detail,
-            Some(json!({
-                "error_code": error_code,
-            })),
-        )),
-        None => Some(ProviderError::protocol_violation(detail, None)),
-    }
+    let classification = error_classifier.classify(
+        None,
+        Some(&detail),
+        None,
+        finish.error_code.as_deref(),
+    );
+    Some(error_classifier.to_provider_error(
+        &classification,
+        detail,
+        Some("claude"),
+        None,
+        None,
+    ))
 }
 
 fn assistant_message_text(message: &Message) -> String {
@@ -856,11 +1185,15 @@ impl EventEmitter {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use pretty_assertions::assert_eq;
+    use serde_json::json;
 
     use super::{
         ClaudeCodeProvider,
         ClaudeCodeProviderConfig,
+        merged_env_layers,
     };
     use arky_protocol::{
         Message,
@@ -894,6 +1227,60 @@ mod tests {
                 window == ["--session-id".to_owned(), "session-123".to_owned()]
             }),
             true
+        );
+    }
+
+    #[test]
+    fn merged_env_layers_should_prefer_user_then_provider_overrides() {
+        let user_env = BTreeMap::from([("SHARED_KEY".to_owned(), "user".to_owned())]);
+        let provider_env = BTreeMap::from([
+            ("SHARED_KEY".to_owned(), "provider".to_owned()),
+            ("PROVIDER_ONLY".to_owned(), "value".to_owned()),
+        ]);
+
+        let merged = merged_env_layers(Some(&user_env), &provider_env);
+
+        assert_eq!(
+            merged.get("SHARED_KEY").map(String::as_str),
+            Some("provider")
+        );
+        assert_eq!(
+            merged.get("PROVIDER_ONLY").map(String::as_str),
+            Some("value")
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_should_merge_request_env_overrides_into_process_config() {
+        let provider = ClaudeCodeProvider::with_config(ClaudeCodeProviderConfig {
+            env: BTreeMap::from([("FROM_PROVIDER".to_owned(), "provider".to_owned())]),
+            ..ClaudeCodeProviderConfig::default()
+        });
+        let mut request = ProviderRequest::new(
+            SessionRef::new(None),
+            TurnContext::new(TurnId::new(), 1),
+            ModelRef::new("sonnet"),
+            vec![Message::user("hello")],
+        );
+        request.settings.extra.insert(
+            "env".to_owned(),
+            json!({
+                "FROM_REQUEST": "request"
+            }),
+        );
+
+        let config = provider
+            .build_process_config(&request)
+            .await
+            .expect("process config should build");
+
+        assert_eq!(
+            config.env.get("FROM_REQUEST").map(String::as_str),
+            Some("request")
+        );
+        assert_eq!(
+            config.env.get("FROM_PROVIDER").map(String::as_str),
+            Some("provider")
         );
     }
 }

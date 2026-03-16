@@ -188,6 +188,14 @@ pub use arky_tools::{
 };
 pub use arky_tools_macros as macros;
 pub use arky_tools_macros::tool;
+pub use arky_usage as usage;
+pub use arky_usage::{
+    ModelCost,
+    NormalizedUsage,
+    ProviderMetadata,
+    ProviderMetadataExtractor,
+    UsageAggregator,
+};
 
 #[cfg(feature = "claude-code")]
 pub use arky_claude_code as claude_code;

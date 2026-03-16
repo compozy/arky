@@ -33,6 +33,8 @@ use crate::{
 pub struct InMemorySessionStoreConfig {
     /// Whether replay events should be persisted in memory.
     pub persist_replay: bool,
+    /// Optional idle time-to-live in milliseconds.
+    pub idle_ttl_ms: Option<u64>,
     /// Maximum number of sessions to retain before evicting the oldest entry.
     pub max_sessions: Option<usize>,
 }
@@ -41,6 +43,7 @@ impl Default for InMemorySessionStoreConfig {
     fn default() -> Self {
         Self {
             persist_replay: true,
+            idle_ttl_ms: None,
             max_sessions: None,
         }
     }
@@ -65,6 +68,7 @@ struct SessionEntry {
     messages: Vec<Message>,
     events: Vec<PersistedEvent>,
     last_checkpoint: Option<TurnCheckpoint>,
+    last_accessed_ms: u64,
 }
 
 impl InMemorySessionStore {
@@ -94,13 +98,21 @@ impl SessionEntry {
 }
 
 impl InMemoryState {
-    fn touch(&mut self, session_id: &SessionId) {
+    fn touch(&mut self, session_id: &SessionId, now_ms: u64) {
+        if let Some(entry) = self.sessions.get_mut(session_id) {
+            entry.last_accessed_ms = now_ms;
+        }
         if let Some(position) =
             self.order.iter().position(|current| current == session_id)
         {
             let _ = self.order.remove(position);
         }
         self.order.push_back(session_id.clone());
+    }
+
+    fn remove(&mut self, session_id: &SessionId) -> Option<SessionEntry> {
+        self.order.retain(|current| current != session_id);
+        self.sessions.remove(session_id)
     }
 
     fn evict_over_capacity(&mut self, max_sessions: Option<usize>) {
@@ -113,6 +125,26 @@ impl InMemoryState {
                 break;
             };
             self.sessions.remove(&oldest);
+        }
+    }
+
+    fn evict_expired(&mut self, now_ms: u64, idle_ttl_ms: Option<u64>) {
+        let expired_ids = self
+            .sessions
+            .iter()
+            .filter(|(_, entry)| {
+                entry.metadata.is_expired_at(now_ms)
+                    || matches!(
+                        idle_ttl_ms,
+                        Some(idle_ttl_ms)
+                            if entry.last_accessed_ms.saturating_add(idle_ttl_ms) <= now_ms
+                    )
+            })
+            .map(|(session_id, _)| session_id.clone())
+            .collect::<Vec<_>>();
+
+        for session_id in expired_ids {
+            let _ = self.remove(&session_id);
         }
     }
 }
@@ -132,11 +164,13 @@ impl SessionStore for InMemorySessionStore {
             messages: Vec::new(),
             events: Vec::new(),
             last_checkpoint: None,
+            last_accessed_ms: now_ms(),
         };
 
         let mut state = self.state.write().await;
+        state.evict_expired(now_ms(), self.config.idle_ttl_ms);
         state.sessions.insert(session_id.clone(), entry);
-        state.touch(&session_id);
+        state.touch(&session_id, now_ms());
         state.evict_over_capacity(self.config.max_sessions);
         drop(state);
         Ok(session_id)
@@ -144,23 +178,15 @@ impl SessionStore for InMemorySessionStore {
 
     async fn load(&self, id: &SessionId) -> Result<SessionSnapshot, SessionError> {
         let mut state = self.state.write().await;
+        let now_ms = now_ms();
+        state.evict_expired(now_ms, self.config.idle_ttl_ms);
         let Some(entry) = state.sessions.get(id).cloned() else {
             return Err(SessionError::NotFound {
                 session_id: id.clone(),
             });
         };
 
-        if entry.metadata.is_expired_at(now_ms()) {
-            state.sessions.remove(id);
-            state.touch(id);
-            state.order.retain(|current| current != id);
-            return Err(SessionError::expired(
-                id.clone(),
-                entry.metadata.expires_at_ms,
-            ));
-        }
-
-        state.touch(id);
+        state.touch(id, now_ms);
         drop(state);
         Ok(entry.snapshot())
     }
@@ -175,6 +201,8 @@ impl SessionStore for InMemorySessionStore {
         }
 
         let mut state = self.state.write().await;
+        let now_ms = now_ms();
+        state.evict_expired(now_ms, self.config.idle_ttl_ms);
         let Some(expires_at_ms) = state
             .sessions
             .get(id)
@@ -184,9 +212,8 @@ impl SessionStore for InMemorySessionStore {
                 session_id: id.clone(),
             });
         };
-        if matches!(expires_at_ms, Some(value) if value <= now_ms()) {
-            state.sessions.remove(id);
-            state.order.retain(|current| current != id);
+        if matches!(expires_at_ms, Some(value) if value <= now_ms) {
+            let _ = state.remove(id);
             return Err(SessionError::expired(id.clone(), expires_at_ms));
         }
         let Some(entry) = state.sessions.get_mut(id) else {
@@ -197,8 +224,8 @@ impl SessionStore for InMemorySessionStore {
 
         entry.messages.extend_from_slice(messages);
         entry.metadata.message_count = entry.messages.len();
-        entry.metadata.updated_at_ms = now_ms();
-        state.touch(id);
+        entry.metadata.updated_at_ms = now_ms;
+        state.touch(id, now_ms);
         drop(state);
         Ok(())
     }
@@ -220,6 +247,8 @@ impl SessionStore for InMemorySessionStore {
         validate_event_batch(id, events, "append_events")?;
 
         let mut state = self.state.write().await;
+        let now_ms = now_ms();
+        state.evict_expired(now_ms, self.config.idle_ttl_ms);
         let Some(expires_at_ms) = state
             .sessions
             .get(id)
@@ -229,9 +258,8 @@ impl SessionStore for InMemorySessionStore {
                 session_id: id.clone(),
             });
         };
-        if matches!(expires_at_ms, Some(value) if value <= now_ms()) {
-            state.sessions.remove(id);
-            state.order.retain(|current| current != id);
+        if matches!(expires_at_ms, Some(value) if value <= now_ms) {
+            let _ = state.remove(id);
             return Err(SessionError::expired(id.clone(), expires_at_ms));
         }
         let Some(entry) = state.sessions.get_mut(id) else {
@@ -254,8 +282,8 @@ impl SessionStore for InMemorySessionStore {
         entry.events.extend_from_slice(events);
         entry.metadata.event_count = entry.events.len();
         entry.metadata.last_sequence = Some(events[events.len() - 1].sequence);
-        entry.metadata.updated_at_ms = now_ms();
-        state.touch(id);
+        entry.metadata.updated_at_ms = now_ms;
+        state.touch(id, now_ms);
         drop(state);
         Ok(())
     }
@@ -266,6 +294,8 @@ impl SessionStore for InMemorySessionStore {
         checkpoint: TurnCheckpoint,
     ) -> Result<(), SessionError> {
         let mut state = self.state.write().await;
+        let now_ms = now_ms();
+        state.evict_expired(now_ms, self.config.idle_ttl_ms);
         let Some(expires_at_ms) = state
             .sessions
             .get(id)
@@ -275,9 +305,8 @@ impl SessionStore for InMemorySessionStore {
                 session_id: id.clone(),
             });
         };
-        if matches!(expires_at_ms, Some(value) if value <= now_ms()) {
-            state.sessions.remove(id);
-            state.order.retain(|current| current != id);
+        if matches!(expires_at_ms, Some(value) if value <= now_ms) {
+            let _ = state.remove(id);
             return Err(SessionError::expired(id.clone(), expires_at_ms));
         }
         let Some(entry) = state.sessions.get_mut(id) else {
@@ -286,10 +315,9 @@ impl SessionStore for InMemorySessionStore {
             });
         };
 
-        let updated_at_ms = now_ms();
-        entry.metadata.apply_checkpoint(&checkpoint, updated_at_ms);
+        entry.metadata.apply_checkpoint(&checkpoint, now_ms);
         entry.last_checkpoint = Some(checkpoint);
-        state.touch(id);
+        state.touch(id, now_ms);
         drop(state);
         Ok(())
     }
@@ -301,20 +329,13 @@ impl SessionStore for InMemorySessionStore {
         limit: Option<usize>,
     ) -> Result<Vec<PersistedEvent>, SessionError> {
         let mut state = self.state.write().await;
+        let now_ms = now_ms();
+        state.evict_expired(now_ms, self.config.idle_ttl_ms);
         let Some(entry) = state.sessions.get(id).cloned() else {
             return Err(SessionError::NotFound {
                 session_id: id.clone(),
             });
         };
-
-        if entry.metadata.is_expired_at(now_ms()) {
-            state.sessions.remove(id);
-            state.order.retain(|current| current != id);
-            return Err(SessionError::expired(
-                id.clone(),
-                entry.metadata.expires_at_ms,
-            ));
-        }
 
         if !entry.metadata.replay_available {
             return Err(SessionError::replay_unavailable(
@@ -323,7 +344,7 @@ impl SessionStore for InMemorySessionStore {
             ));
         }
 
-        state.touch(id);
+        state.touch(id, now_ms);
         drop(state);
 
         let mut events = entry
@@ -350,16 +371,7 @@ impl SessionStore for InMemorySessionStore {
     ) -> Result<Vec<SessionMetadata>, SessionError> {
         let now_ms = now_ms();
         let mut state = self.state.write().await;
-        let expired_ids = state
-            .sessions
-            .iter()
-            .filter(|(_, entry)| entry.metadata.is_expired_at(now_ms))
-            .map(|(session_id, _)| session_id.clone())
-            .collect::<Vec<_>>();
-        for expired_id in expired_ids {
-            state.sessions.remove(&expired_id);
-            state.order.retain(|current| current != &expired_id);
-        }
+        state.evict_expired(now_ms, self.config.idle_ttl_ms);
 
         let mut sessions = state
             .sessions
@@ -382,12 +394,11 @@ impl SessionStore for InMemorySessionStore {
 
     async fn delete(&self, id: &SessionId) -> Result<(), SessionError> {
         let mut state = self.state.write().await;
-        let Some(_) = state.sessions.remove(id) else {
+        let Some(_) = state.remove(id) else {
             return Err(SessionError::NotFound {
                 session_id: id.clone(),
             });
         };
-        state.order.retain(|current| current != id);
         drop(state);
         Ok(())
     }
@@ -552,6 +563,7 @@ mod tests {
     async fn append_events_should_fail_when_replay_is_disabled() {
         let store = InMemorySessionStore::new(InMemorySessionStoreConfig {
             persist_replay: false,
+            idle_ttl_ms: None,
             max_sessions: None,
         });
         let session_id = store
@@ -571,6 +583,7 @@ mod tests {
     async fn replay_events_should_fail_when_replay_is_disabled() {
         let store = InMemorySessionStore::new(InMemorySessionStoreConfig {
             persist_replay: false,
+            idle_ttl_ms: None,
             max_sessions: None,
         });
         let session_id = store
@@ -712,7 +725,73 @@ mod tests {
             .await
             .expect_err("expired session should not load");
 
-        assert_eq!(error.error_code(), "SESSION_EXPIRED");
+        assert_eq!(error.error_code(), "SESSION_NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn expired_idle_session_should_not_load() {
+        let store = InMemorySessionStore::new(InMemorySessionStoreConfig {
+            persist_replay: true,
+            idle_ttl_ms: Some(0),
+            max_sessions: None,
+        });
+        let session_id = store
+            .create(NewSession::default())
+            .await
+            .expect("session should be created");
+
+        let error = store
+            .load(&session_id)
+            .await
+            .expect_err("idle-expired session should not load");
+
+        assert_eq!(error.error_code(), "SESSION_NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn access_should_refresh_idle_ttl() {
+        let store = InMemorySessionStore::new(InMemorySessionStoreConfig {
+            persist_replay: true,
+            idle_ttl_ms: Some(u64::MAX),
+            max_sessions: None,
+        });
+        let session_id = store
+            .create(NewSession::default())
+            .await
+            .expect("session should be created");
+
+        let snapshot = store.load(&session_id).await.expect("session should load");
+
+        assert_eq!(snapshot.metadata.id, session_id);
+    }
+
+    #[tokio::test]
+    async fn over_capacity_should_evict_oldest_entry() {
+        let store = InMemorySessionStore::new(InMemorySessionStoreConfig {
+            persist_replay: true,
+            idle_ttl_ms: None,
+            max_sessions: Some(1),
+        });
+        let first = store
+            .create(NewSession::default())
+            .await
+            .expect("first session should create");
+        let second = store
+            .create(NewSession::default())
+            .await
+            .expect("second session should create");
+
+        let error = store
+            .load(&first)
+            .await
+            .expect_err("first session should be evicted");
+        let second_snapshot = store
+            .load(&second)
+            .await
+            .expect("second session should load");
+
+        assert_eq!(error.error_code(), "SESSION_NOT_FOUND");
+        assert_eq!(second_snapshot.metadata.id, second);
     }
 
     #[test]

@@ -83,6 +83,15 @@ pub struct TurnStartParams {
     pub approval_policy: Option<String>,
 }
 
+/// Parameters for `thread/compact/start`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CompactThreadParams {
+    /// Optional routing scope identifier.
+    pub scope_id: Option<String>,
+    /// Additional compaction payload fields.
+    pub payload: Map<String, Value>,
+}
+
 /// Stream of notifications for one active turn.
 pub struct TurnNotificationStream {
     thread_id: String,
@@ -201,6 +210,22 @@ where
             receiver: UnboundedReceiverStream::new(receiver),
         })
     }
+
+    /// Requests thread compaction for an existing Codex thread.
+    pub async fn compact_thread(
+        &self,
+        thread_id: &str,
+        params: CompactThreadParams,
+    ) -> Result<(), ProviderError> {
+        self.rpc
+            .request_value(
+                "thread/compact/start",
+                Some(thread_compact_payload(thread_id, params)),
+            )
+            .await?;
+
+        Ok(())
+    }
 }
 
 fn thread_open_payload(thread_id: Option<&str>, params: ThreadOpenParams) -> Value {
@@ -267,6 +292,16 @@ fn json_value_object<const N: usize>(entries: [(&str, Value); N]) -> Value {
     Value::Object(object)
 }
 
+fn thread_compact_payload(thread_id: &str, params: CompactThreadParams) -> Value {
+    let mut payload = params.payload;
+    payload.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
+    if let Some(scope_id) = params.scope_id {
+        payload.insert("scopeId".to_owned(), Value::String(scope_id));
+    }
+
+    Value::Object(payload)
+}
+
 fn parse_thread_start_result(
     value: &Value,
     method: &str,
@@ -312,6 +347,7 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::{
+        CompactThreadParams,
         RpcClient,
         ThreadManager,
         ThreadOpenParams,
@@ -436,6 +472,37 @@ mod tests {
             .expect_err("resume mismatch should fail");
 
         assert!(matches!(error, ProviderError::ProtocolViolation { .. }));
+    }
+
+    #[tokio::test]
+    async fn thread_manager_should_forward_compaction_payloads() {
+        let rpc = Arc::new(MockRpcClient {
+            calls: Mutex::new(Vec::new()),
+            next_response: Mutex::new(json!({ "ok": true })),
+        });
+        let manager = ThreadManager::new(rpc.clone(), NotificationRouter::new());
+
+        manager
+            .compact_thread(
+                "thread-1",
+                CompactThreadParams {
+                    scope_id: Some("scope-1".to_owned()),
+                    payload: Map::from_iter([
+                        ("tokenThreshold".to_owned(), json!(8_192)),
+                        ("prompt".to_owned(), json!("compact now")),
+                    ]),
+                },
+            )
+            .await
+            .expect("compaction should succeed");
+
+        let calls = rpc.calls.lock().await.clone();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "thread/compact/start");
+        assert_eq!(calls[0].1["threadId"], "thread-1");
+        assert_eq!(calls[0].1["scopeId"], "scope-1");
+        assert_eq!(calls[0].1["tokenThreshold"], 8_192);
+        assert_eq!(calls[0].1["prompt"], "compact now");
     }
 
     #[test]

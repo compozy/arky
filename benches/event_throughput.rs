@@ -85,6 +85,7 @@ fn build_stream(
                 meta,
                 message: final_message.clone(),
                 tool_results: Vec::new(),
+                usage: None,
             }
         } else {
             AgentEvent::MessageUpdate {

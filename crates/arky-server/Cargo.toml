@@ -26,6 +26,7 @@ arky-session = { workspace = true }
 async-stream = { workspace = true }
 futures = { workspace = true }
 tower-http = { version = "0.6.8", features = ["cors"], optional = true }
+subtle = "2.6.1"
 
 [dev-dependencies]
 arky-provider = { workspace = true }

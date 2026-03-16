@@ -16,8 +16,10 @@ use arky_protocol::{
     AgentResponse,
     ContentBlock,
     EventMetadata,
+    InputTokenDetails,
     Message,
     ModelRef,
+    OutputTokenDetails,
     PersistedEvent,
     ProviderRequest,
     ProviderSettings,
@@ -29,8 +31,12 @@ use arky_protocol::{
     TurnCheckpoint,
     TurnContext,
     TurnId,
+    Usage,
 };
-use arky_provider::Provider;
+use arky_provider::{
+    Provider,
+    validate_capabilities,
+};
 use arky_session::SessionStore;
 use arky_tools::{
     Tool,
@@ -38,6 +44,7 @@ use arky_tools::{
     ToolRegistrationHandle,
     ToolRegistry,
 };
+use arky_usage::NormalizedUsage;
 use futures::StreamExt;
 use serde_json::{
     Value,
@@ -85,6 +92,11 @@ pub struct TurnRunResult {
 struct ToolExecutionOutcome {
     tool_results: Vec<ToolResult>,
     steering_inputs: Vec<String>,
+}
+
+struct ProviderTurnOutcome {
+    message: Message,
+    usage: Option<Usage>,
 }
 
 #[expect(
@@ -162,6 +174,7 @@ pub async fn run_turn(
                 );
 
                 let mut assistant_message: Option<Message> = None;
+                let mut turn_usage: Option<Usage> = None;
                 let mut tool_results = Vec::new();
                 let mut steering_messages = Vec::new();
 
@@ -225,7 +238,7 @@ pub async fn run_turn(
                         }
                     }
 
-                    assistant_message = Some(stream_provider_turn(
+                    let provider_outcome = stream_provider_turn(
                         &runtime,
                         &mut session,
                         &mut event_log,
@@ -234,7 +247,9 @@ pub async fn run_turn(
                         &turn_context,
                         &control.cancel,
                     )
-                    .await?);
+                    .await?;
+                    turn_usage = provider_outcome.usage;
+                    assistant_message = Some(provider_outcome.message);
 
                     let assistant_message = assistant_message.clone().ok_or_else(|| {
                         CoreError::invalid_state(
@@ -329,6 +344,12 @@ pub async fn run_turn(
                             prepare_steering_messages(&session_ref, steering_inputs);
                     }
 
+                    if let Some(turn_usage) = &turn_usage {
+                        session
+                            .usage
+                            .accumulate_turn(&NormalizedUsage::from_protocol_usage(turn_usage));
+                    }
+
                     emit_event(
                         &runtime.session_store,
                         &runtime.events,
@@ -341,6 +362,7 @@ pub async fn run_turn(
                             meta,
                             message: assistant_message.clone(),
                             tool_results: tool_results.clone(),
+                            usage: turn_usage.clone(),
                         },
                     )
                     .await?;
@@ -375,15 +397,18 @@ pub async fn run_turn(
                         .clone_from(&checkpoint.provider_session_id);
                     session.last_checkpoint = Some(checkpoint);
 
-                    final_response = Some(
-                        AgentResponse::new(
-                            session.session_ref(),
-                            turn_context.clone(),
-                            assistant_message,
-                        )
-                        .with_tool_results(run_tool_results.clone())
-                        .with_events(event_log.clone()),
-                    );
+                    let mut response = AgentResponse::new(
+                        session.session_ref(),
+                        turn_context.clone(),
+                        assistant_message,
+                    )
+                    .with_tool_results(run_tool_results.clone())
+                    .with_events(event_log.clone());
+                    if normalized_usage_has_data(session.usage.session_total()) {
+                        response =
+                            response.with_usage(session.usage.session_total().to_protocol_usage());
+                    }
+                    final_response = Some(response);
 
                     Ok::<(), CoreError>(())
                 }
@@ -536,7 +561,7 @@ async fn stream_provider_turn(
     turn_id: &TurnId,
     turn_context: &TurnContext,
     cancel: &CancellationToken,
-) -> Result<Message, CoreError> {
+) -> Result<ProviderTurnOutcome, CoreError> {
     check_cancelled(cancel)?;
 
     let messages =
@@ -558,6 +583,29 @@ async fn stream_provider_turn(
         .with_tools(ToolContext::new().with_definitions(tool_definitions(&runtime.tools)))
         .with_settings(runtime.provider_settings.clone());
 
+        let warnings =
+            validate_capabilities(&request, &runtime.provider.descriptor().capabilities);
+        for warning in warnings {
+            emit_event(
+                &runtime.session_store,
+                &runtime.events,
+                stream_tx,
+                session,
+                event_log,
+                &runtime.provider.descriptor().id,
+                Some(turn_id),
+                |meta| AgentEvent::Custom {
+                    meta,
+                    event_type: "capability_warning".to_owned(),
+                    payload: json!({
+                        "capability": warning.capability,
+                        "message": warning.message,
+                    }),
+                },
+            )
+            .await?;
+        }
+
         let mut stream = runtime.provider.stream(request).await.map_err(|error| {
             CoreError::invalid_state(
                 format!("provider stream failed to start: {error}"),
@@ -570,6 +618,7 @@ async fn stream_provider_turn(
 
         let provider_id = runtime.provider.descriptor().id.clone();
         let mut terminal_message: Option<Message> = None;
+        let mut terminal_usage: Option<Usage> = None;
 
         loop {
             let next = tokio::select! {
@@ -655,6 +704,9 @@ async fn stream_provider_turn(
                     payload,
                     ..
                 } => {
+                    if let Some(usage) = usage_from_custom_event(&event_type, &payload) {
+                        merge_usage(&mut terminal_usage, &usage);
+                    }
                     emit_event(
                         &runtime.session_store,
                         &runtime.events,
@@ -671,27 +723,35 @@ async fn stream_provider_turn(
                     )
                     .await?;
                 }
-                AgentEvent::TurnEnd { message, .. } => {
+                AgentEvent::TurnEnd { message, usage, .. } => {
                     terminal_message = Some(decorate_message(
                         message,
                         &session.id,
                         turn_id,
                         &provider_id,
                     ));
+                    if let Some(usage) = usage {
+                        merge_usage(&mut terminal_usage, &usage);
+                    }
                 }
                 _ => {}
             }
         }
 
-        terminal_message.ok_or_else(|| {
-            CoreError::invalid_state(
-                "provider stream completed without a final assistant message",
-                Some(json!({
-                    "provider_id": provider_id.as_str(),
-                    "turn_id": turn_id.to_string(),
-                })),
-            )
-        })
+        terminal_message
+            .map(|message| ProviderTurnOutcome {
+                message,
+                usage: terminal_usage,
+            })
+            .ok_or_else(|| {
+                CoreError::invalid_state(
+                    "provider stream completed without a final assistant message",
+                    Some(json!({
+                        "provider_id": provider_id.as_str(),
+                        "turn_id": turn_id.to_string(),
+                    })),
+                )
+            })
     }
     .instrument(provider_call_span)
     .await
@@ -919,6 +979,107 @@ fn tool_result_value(result: &ToolResult) -> Value {
     })
 }
 
+fn usage_from_custom_event(event_type: &str, payload: &Value) -> Option<Usage> {
+    match event_type {
+        "usage" | "provider_usage" | "turn_usage" | "completion_usage" => {
+            serde_json::from_value(payload.clone()).ok().or_else(|| {
+                payload
+                    .get("usage")
+                    .cloned()
+                    .and_then(|usage| serde_json::from_value(usage).ok())
+            })
+        }
+        _ => payload
+            .get("usage")
+            .cloned()
+            .and_then(|usage| serde_json::from_value(usage).ok()),
+    }
+}
+
+fn merge_usage(target: &mut Option<Usage>, incoming: &Usage) {
+    let Some(existing) = target.as_ref() else {
+        *target = Some(incoming.clone());
+        return;
+    };
+    *target = Some(merge_usage_values(existing, incoming));
+}
+
+fn merge_usage_values(left: &Usage, right: &Usage) -> Usage {
+    Usage {
+        input_tokens: sum_option_u64(left.input_tokens, right.input_tokens),
+        output_tokens: sum_option_u64(left.output_tokens, right.output_tokens),
+        total_tokens: sum_option_u64(left.total_tokens, right.total_tokens),
+        input_details: merge_input_details(
+            left.input_details.as_ref(),
+            right.input_details.as_ref(),
+        ),
+        output_details: merge_output_details(
+            left.output_details.as_ref(),
+            right.output_details.as_ref(),
+        ),
+        cost_usd: sum_option_f64(left.cost_usd, right.cost_usd),
+        duration_ms: sum_option_f64(left.duration_ms, right.duration_ms),
+    }
+}
+
+fn merge_input_details(
+    left: Option<&InputTokenDetails>,
+    right: Option<&InputTokenDetails>,
+) -> Option<InputTokenDetails> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(InputTokenDetails {
+            cache_read: sum_option_u64(left.cache_read, right.cache_read),
+            cache_write: sum_option_u64(left.cache_write, right.cache_write),
+            no_cache: sum_option_u64(left.no_cache, right.no_cache),
+        }),
+        (Some(left), None) => Some(left.clone()),
+        (None, Some(right)) => Some(right.clone()),
+        (None, None) => None,
+    }
+}
+
+fn merge_output_details(
+    left: Option<&OutputTokenDetails>,
+    right: Option<&OutputTokenDetails>,
+) -> Option<OutputTokenDetails> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(OutputTokenDetails {
+            text: sum_option_u64(left.text, right.text),
+            reasoning: sum_option_u64(left.reasoning, right.reasoning),
+        }),
+        (Some(left), None) => Some(left.clone()),
+        (None, Some(right)) => Some(right.clone()),
+        (None, None) => None,
+    }
+}
+
+const fn sum_option_u64(left: Option<u64>, right: Option<u64>) -> Option<u64> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.saturating_add(right)),
+        (Some(left), None) => Some(left),
+        (None, Some(right)) => Some(right),
+        (None, None) => None,
+    }
+}
+
+fn sum_option_f64(left: Option<f64>, right: Option<f64>) -> Option<f64> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left + right),
+        (Some(left), None) => Some(left),
+        (None, Some(right)) => Some(right),
+        (None, None) => None,
+    }
+}
+
+const fn normalized_usage_has_data(usage: &NormalizedUsage) -> bool {
+    usage.input_tokens > 0
+        || usage.output_tokens > 0
+        || usage.cached_input_tokens > 0
+        || usage.reasoning_tokens > 0
+        || usage.cost_usd.is_some()
+        || usage.duration_ms.is_some()
+}
+
 fn decorate_message(
     mut message: Message,
     session_id: &arky_protocol::SessionId,
@@ -1067,6 +1228,7 @@ mod tests {
         ModelRef,
         ProviderId,
         ProviderSettings,
+        ReasoningEffort,
         ToolCall,
         ToolContent,
         ToolResult,
@@ -1231,6 +1393,7 @@ mod tests {
                     .with_provider_id(ProviderId::new("turn-test")),
                 message: Message::assistant("done"),
                 tool_results: Vec::new(),
+                usage: None,
             }),
         ]))
     }
@@ -1307,5 +1470,132 @@ mod tests {
 
         assert!(matches!(result.response, Err(CoreError::Cancelled { .. })));
         assert_eq!(runtime.tools.contains("mcp/test/temp"), false);
+    }
+
+    #[tokio::test]
+    async fn run_turn_should_accumulate_usage_into_turn_end_and_response() {
+        let runtime = turn_runtime(Arc::new(StaticProvider::new(|request| {
+            let session_id = request
+                .session
+                .id
+                .clone()
+                .expect("request should include a session id");
+            let turn_id = request.turn.id;
+            let provider_id = ProviderId::new("turn-test");
+            Ok(Box::pin(stream::iter(vec![
+                Ok(AgentEvent::MessageEnd {
+                    meta: EventMetadata::new(1, 1)
+                        .with_session_id(session_id.clone())
+                        .with_turn_id(turn_id.clone())
+                        .with_provider_id(provider_id.clone()),
+                    message: Message::assistant("done"),
+                }),
+                Ok(AgentEvent::Custom {
+                    meta: EventMetadata::new(2, 2)
+                        .with_session_id(session_id.clone())
+                        .with_turn_id(turn_id.clone())
+                        .with_provider_id(provider_id.clone()),
+                    event_type: "usage".to_owned(),
+                    payload: json!({
+                        "input_tokens": 10,
+                        "output_tokens": 4,
+                        "total_tokens": 14,
+                    }),
+                }),
+                Ok(AgentEvent::TurnEnd {
+                    meta: EventMetadata::new(3, 3)
+                        .with_session_id(session_id)
+                        .with_turn_id(turn_id)
+                        .with_provider_id(provider_id),
+                    message: Message::assistant("done"),
+                    tool_results: Vec::new(),
+                    usage: None,
+                }),
+            ])))
+        })));
+        let session = new_session(runtime.as_ref()).await;
+
+        let result = run_turn(
+            Arc::clone(&runtime),
+            session,
+            "hello".to_owned(),
+            None,
+            TurnControl {
+                cancel: CancellationToken::new(),
+                steering_rx: tokio::sync::mpsc::unbounded_channel().1,
+                follow_up_rx: tokio::sync::mpsc::unbounded_channel().1,
+            },
+        )
+        .await;
+
+        let response = result.response.expect("turn should succeed");
+        assert_eq!(
+            response.usage.as_ref().and_then(|usage| usage.total_tokens),
+            Some(14)
+        );
+        let turn_end_usage = response.events.iter().find_map(|event| match event {
+            AgentEvent::TurnEnd { usage, .. } => usage.clone(),
+            _ => None,
+        });
+        assert_eq!(
+            turn_end_usage.as_ref().and_then(|usage| usage.total_tokens),
+            Some(14)
+        );
+    }
+
+    #[tokio::test]
+    async fn run_turn_should_emit_capability_warning_events() {
+        let provider = Arc::new(StaticProvider {
+            descriptor: ProviderDescriptor::new(
+                ProviderId::new("turn-test"),
+                ProviderFamily::Custom("turn-test".to_owned()),
+                ProviderCapabilities::new()
+                    .with_streaming(true)
+                    .with_generate(true),
+            ),
+            stream_factory: Arc::new(|request| Ok(success_stream(&request))),
+        });
+        let (events, _) = broadcast::channel(32);
+        let mut settings = ProviderSettings::new();
+        settings.reasoning_effort = Some(ReasoningEffort::Low);
+        let runtime = Arc::new(TurnRuntime {
+            provider,
+            tools: ToolRegistry::new(),
+            temporary_tools: vec![Arc::new(TempTool)],
+            hooks: Arc::new(HookChain::new()),
+            session_store: Arc::new(InMemorySessionStore::default()),
+            model: ModelRef::new("mock-model"),
+            system_prompt: None,
+            provider_settings: settings,
+            events,
+        });
+        let session = new_session(runtime.as_ref()).await;
+
+        let result = run_turn(
+            Arc::clone(&runtime),
+            session,
+            "hello".to_owned(),
+            None,
+            TurnControl {
+                cancel: CancellationToken::new(),
+                steering_rx: tokio::sync::mpsc::unbounded_channel().1,
+                follow_up_rx: tokio::sync::mpsc::unbounded_channel().1,
+            },
+        )
+        .await;
+
+        let response = result.response.expect("turn should succeed");
+        let warning = response.events.iter().find_map(|event| match event {
+            AgentEvent::Custom {
+                event_type,
+                payload,
+                ..
+            } if event_type == "capability_warning" => Some(payload.clone()),
+            _ => None,
+        });
+        assert_eq!(
+            warning.and_then(|payload| payload.get("capability").cloned()),
+            Some(json!("extended_thinking")),
+        );
     }
 }

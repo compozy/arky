@@ -16,6 +16,7 @@ arky-protocol = { workspace = true }
 arky-provider = { workspace = true }
 arky-session = { workspace = true }
 arky-tools = { workspace = true }
+arky-usage = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }

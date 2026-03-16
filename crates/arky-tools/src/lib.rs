@@ -8,6 +8,7 @@ mod codec;
 mod descriptor;
 mod error;
 mod registry;
+mod truncation;
 
 pub use crate::{
     codec::{
@@ -32,6 +33,11 @@ pub use crate::{
         Tool,
         ToolRegistrationHandle,
         ToolRegistry,
+    },
+    truncation::{
+        TruncationConfig,
+        TruncationResult,
+        truncate_tool_output,
     },
 };
 pub use arky_protocol::{

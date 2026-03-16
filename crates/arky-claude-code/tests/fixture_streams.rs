@@ -3,11 +3,17 @@
 use std::{
     collections::BTreeMap,
     path::PathBuf,
+    sync::{
+        Arc,
+        Mutex,
+    },
 };
 
 use arky_claude_code::{
+    ClaudeCliBehaviorConfig,
     ClaudeCodeProvider,
     ClaudeCodeProviderConfig,
+    ClaudeStderrCallback,
 };
 use arky_protocol::{
     AgentEvent,
@@ -56,7 +62,10 @@ fn fixture_provider_with_verbose(mode: &str, verbose: bool) -> ClaudeCodeProvide
     ClaudeCodeProvider::with_config(ClaudeCodeProviderConfig {
         binary: fixture_binary(),
         env,
-        verbose,
+        cli_behavior: ClaudeCliBehaviorConfig {
+            verbose,
+            ..ClaudeCliBehaviorConfig::default()
+        },
         ..ClaudeCodeProviderConfig::default()
     })
 }
@@ -243,4 +252,190 @@ async fn provider_should_continue_after_rate_limit_metadata_events() {
 
     assert!(saw_rate_limit);
     assert!(saw_turn_end);
+}
+
+#[tokio::test]
+async fn provider_should_emit_nested_preview_updates_before_parent_completion() {
+    let provider = fixture_provider("nested_preview");
+    let mut stream = provider
+        .stream(request())
+        .await
+        .expect("nested preview fixture stream should start");
+
+    let mut saw_running_preview = false;
+    let mut saw_completed_preview = false;
+    while let Some(item) = stream.next().await {
+        match item.expect("fixture event should be valid") {
+            AgentEvent::ToolExecutionUpdate {
+                tool_call_id,
+                partial_result,
+                ..
+            } if tool_call_id == "parent-1" => {
+                let tool_calls = partial_result["toolCalls"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                if tool_calls.iter().any(|tool_call| {
+                    tool_call["id"] == "child-1" && tool_call["state"] == "running"
+                }) {
+                    saw_running_preview = true;
+                }
+                if tool_calls.iter().any(|tool_call| {
+                    tool_call["id"] == "child-1" && tool_call["state"] == "completed"
+                }) {
+                    saw_completed_preview = true;
+                }
+            }
+            AgentEvent::ToolExecutionEnd { tool_call_id, .. }
+                if tool_call_id == "parent-1" && saw_completed_preview =>
+            {
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    assert!(saw_running_preview);
+    assert!(saw_completed_preview);
+}
+
+#[tokio::test]
+async fn provider_should_recover_truncated_streams_with_retry_marker() {
+    let provider = fixture_provider("truncated_stream");
+    let mut stream = provider
+        .stream(request())
+        .await
+        .expect("truncated fixture stream should start");
+
+    let mut saw_turn_end = false;
+    let mut saw_retry_marker = false;
+    while let Some(item) = stream.next().await {
+        match item.expect("fixture event should be valid") {
+            AgentEvent::TurnEnd { message, .. } => {
+                saw_turn_end = message.content.iter().any(|block| {
+                    matches!(
+                        block,
+                        arky_protocol::ContentBlock::Text { text } if text.len() >= 600
+                    )
+                });
+            }
+            AgentEvent::Custom {
+                event_type,
+                payload,
+                ..
+            } if event_type == "claude_code.stream_retry_marker" => {
+                saw_retry_marker = payload["retry_suggested"] == true;
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    assert!(saw_turn_end);
+    assert!(saw_retry_marker);
+}
+
+#[tokio::test]
+async fn provider_should_forward_fixture_stderr_to_callback() {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let mut env = BTreeMap::new();
+    env.insert(
+        "CLAUDE_FIXTURE_MODE".to_owned(),
+        "contract_basic".to_owned(),
+    );
+    env.insert(
+        "CLAUDE_FIXTURE_STDERR".to_owned(),
+        "diagnostic stderr".to_owned(),
+    );
+
+    let provider = ClaudeCodeProvider::with_config(ClaudeCodeProviderConfig {
+        binary: fixture_binary(),
+        env,
+        cli_behavior: ClaudeCliBehaviorConfig {
+            stderr_callback: Some(ClaudeStderrCallback::new({
+                let captured = Arc::clone(&captured);
+                move |stderr| {
+                    captured
+                        .lock()
+                        .expect("captured stderr mutex should lock")
+                        .push(stderr.to_owned());
+                }
+            })),
+            ..ClaudeCliBehaviorConfig::default()
+        },
+        ..ClaudeCodeProviderConfig::default()
+    });
+
+    let mut stream = provider
+        .stream(request())
+        .await
+        .expect("fixture stream should start");
+
+    while let Some(item) = stream.next().await {
+        item.expect("fixture event should be valid");
+    }
+
+    pretty_assertions::assert_eq!(
+        captured
+            .lock()
+            .expect("captured stderr mutex should lock")
+            .as_slice(),
+        ["diagnostic stderr"]
+    );
+}
+
+#[tokio::test]
+async fn provider_should_emit_warning_events_for_request_settings() {
+    let provider = fixture_provider("contract_basic");
+    let mut request = ProviderRequest::new(
+        SessionRef::new(Some(SessionId::new()))
+            .with_provider_session_id("session/invalid"),
+        TurnContext::new(TurnId::new(), 1),
+        ModelRef::new("bad model"),
+        vec![Message::user("x".repeat(100_001))],
+    );
+    request.settings.temperature = Some(0.1);
+
+    let mut stream = provider
+        .stream(request)
+        .await
+        .expect("warning fixture stream should start");
+
+    let mut warnings = Vec::new();
+    while let Some(item) = stream.next().await {
+        match item.expect("fixture event should be valid") {
+            AgentEvent::Custom {
+                event_type,
+                payload,
+                ..
+            } if event_type == "claude_code.warning" => {
+                if let Some(message) = payload["message"].as_str() {
+                    warnings.push(message.to_owned());
+                }
+            }
+            AgentEvent::TurnEnd { .. } => break,
+            _ => {}
+        }
+    }
+
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("temperature"))
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("Unknown model ID"))
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("Very long prompt"))
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("Unusual session ID format"))
+    );
 }

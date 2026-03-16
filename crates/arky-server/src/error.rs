@@ -42,6 +42,12 @@ pub enum ServerError {
         /// Human-readable validation failure.
         message: String,
     },
+    /// Request body validation failed.
+    #[error("invalid request: {message}")]
+    InvalidRequest {
+        /// Human-readable validation failure.
+        message: String,
+    },
     /// Provider health was requested for an unknown provider.
     #[error("provider health for `{provider_id}` was not found")]
     ProviderHealthNotFound {
@@ -72,6 +78,14 @@ impl ServerError {
     pub fn invalid_query(field: &'static str, message: impl Into<String>) -> Self {
         Self::InvalidQuery {
             field,
+            message: message.into(),
+        }
+    }
+
+    /// Creates a request validation error.
+    #[must_use]
+    pub fn invalid_request(message: impl Into<String>) -> Self {
+        Self::InvalidRequest {
             message: message.into(),
         }
     }
@@ -110,6 +124,7 @@ impl ClassifiedError for ServerError {
             Self::Session(error) => error.error_code(),
             Self::InvalidSessionId { .. } => "SERVER_INVALID_SESSION_ID",
             Self::InvalidQuery { .. } => "SERVER_INVALID_QUERY",
+            Self::InvalidRequest { .. } => "SERVER_INVALID_REQUEST",
             Self::ProviderHealthNotFound { .. } => "SERVER_PROVIDER_HEALTH_NOT_FOUND",
             Self::Internal { .. } => "SERVER_INTERNAL",
         }
@@ -121,6 +136,7 @@ impl ClassifiedError for ServerError {
             Self::Session(error) => error.is_retryable(),
             Self::InvalidSessionId { .. }
             | Self::InvalidQuery { .. }
+            | Self::InvalidRequest { .. }
             | Self::ProviderHealthNotFound { .. }
             | Self::Internal { .. } => false,
         }
@@ -132,6 +148,7 @@ impl ClassifiedError for ServerError {
             Self::Session(error) => error.retry_after(),
             Self::InvalidSessionId { .. }
             | Self::InvalidQuery { .. }
+            | Self::InvalidRequest { .. }
             | Self::ProviderHealthNotFound { .. }
             | Self::Internal { .. } => None,
         }
@@ -141,7 +158,9 @@ impl ClassifiedError for ServerError {
         match self {
             Self::Core(error) => error.http_status(),
             Self::Session(error) => error.http_status(),
-            Self::InvalidSessionId { .. } | Self::InvalidQuery { .. } => 400,
+            Self::InvalidSessionId { .. }
+            | Self::InvalidQuery { .. }
+            | Self::InvalidRequest { .. } => 400,
             Self::ProviderHealthNotFound { .. } => 404,
             Self::Internal { .. } => 500,
         }
@@ -156,6 +175,9 @@ impl ClassifiedError for ServerError {
             })),
             Self::InvalidQuery { field, message } => Some(json!({
                 "field": field,
+                "message": message,
+            })),
+            Self::InvalidRequest { message } => Some(json!({
                 "message": message,
             })),
             Self::ProviderHealthNotFound { provider_id } => Some(json!({

@@ -96,6 +96,12 @@ enum AgentCommand {
     Abort {
         response_tx: oneshot::Sender<Result<(), CoreError>>,
     },
+    CurrentSession {
+        response_tx: oneshot::Sender<Option<SessionId>>,
+    },
+    ClearSession {
+        response_tx: oneshot::Sender<Result<(), CoreError>>,
+    },
     TurnFinished {
         session: Box<SessionState>,
     },
@@ -233,6 +239,32 @@ impl Agent {
             CoreError::invalid_state("abort command handler dropped", None)
         })?
     }
+
+    /// Returns the current session identifier when one is active.
+    pub async fn current_session_id(&self) -> Option<SessionId> {
+        let (tx, rx) = oneshot::channel();
+        if self
+            .inner
+            .queue
+            .send(AgentCommand::CurrentSession { response_tx: tx })
+            .is_err()
+        {
+            return None;
+        }
+
+        rx.await.ok().flatten()
+    }
+
+    /// Clears the active session when the agent is idle.
+    pub async fn clear_session(&self) -> Result<(), CoreError> {
+        let (tx, rx) = oneshot::channel();
+        self.inner
+            .queue
+            .send(AgentCommand::ClearSession { response_tx: tx })?;
+        rx.await.map_err(|_| {
+            CoreError::invalid_state("clear_session command handler dropped", None)
+        })?
+    }
 }
 
 async fn handle_command(
@@ -264,6 +296,13 @@ async fn handle_command(
             response_tx,
         } => handle_resume(runtime, state, session_id, response_tx).await,
         AgentCommand::Abort { response_tx } => handle_abort(state, response_tx),
+        AgentCommand::CurrentSession { response_tx } => {
+            let _ = response_tx
+                .send(state.session.as_ref().map(|session| session.id.clone()));
+        }
+        AgentCommand::ClearSession { response_tx } => {
+            handle_clear_session(state, response_tx);
+        }
         AgentCommand::TurnFinished { session } => {
             state.session = Some(*session);
             state.active_turn = None;
@@ -400,6 +439,20 @@ fn handle_abort(state: &ActorState, response_tx: oneshot::Sender<Result<(), Core
             CoreError::invalid_state("cannot abort without an active turn", None)
         })
         .map(|active| active.cancel.cancel());
+    let _ = response_tx.send(result);
+}
+
+fn handle_clear_session(
+    state: &mut ActorState,
+    response_tx: oneshot::Sender<Result<(), CoreError>>,
+) {
+    let result = if state.active_turn.is_some() {
+        current_busy_error(state, "clear_session")
+    } else {
+        state.session = None;
+        state.bootstrap_resume = None;
+        Ok(())
+    };
     let _ = response_tx.send(result);
 }
 

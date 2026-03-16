@@ -130,6 +130,40 @@ function handleTurnStart(frame) {
   notify("turn/completed", { threadId });
 }
 
+function handleModelList(frame) {
+  const params = frame.params || {};
+  if (params.cursor === "cursor-2") {
+    respond(frame.id, {
+      data: [
+        {
+          id: "o4-mini",
+          name: "o4-mini",
+        },
+        {
+          id: "gpt-4o",
+          displayName: "GPT-4o",
+        },
+      ],
+      nextCursor: null,
+    });
+    return;
+  }
+
+  respond(frame.id, {
+    models: [
+      {
+        id: "gpt-5",
+        name: "gpt-5",
+      },
+      {
+        id: "o4-mini",
+        name: "o4-mini",
+      },
+    ],
+    nextCursor: "cursor-2",
+  });
+}
+
 function handleFrame(frame) {
   if (!frame || typeof frame !== "object") {
     return;
@@ -149,6 +183,9 @@ function handleFrame(frame) {
       break;
     case "turn/start":
       handleTurnStart(frame);
+      break;
+    case "model/list":
+      handleModelList(frame);
       break;
     default:
       if (Object.prototype.hasOwnProperty.call(frame, "id")) {

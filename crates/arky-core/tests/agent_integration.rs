@@ -78,10 +78,20 @@ impl RecordingProvider {
     where
         F: Fn(ProviderRequest) -> ProviderEventStream + Send + Sync + 'static,
     {
+        Self::new_with_descriptor(test_provider_descriptor(), handler)
+    }
+
+    fn new_with_descriptor<F>(
+        descriptor: ProviderDescriptor,
+        handler: F,
+    ) -> (Self, Arc<Mutex<Vec<ProviderRequest>>>)
+    where
+        F: Fn(ProviderRequest) -> ProviderEventStream + Send + Sync + 'static,
+    {
         let requests = Arc::new(Mutex::new(Vec::new()));
         (
             Self {
-                descriptor: test_provider_descriptor(),
+                descriptor,
                 handler: Arc::new(handler),
                 requests: Arc::clone(&requests),
             },
@@ -216,6 +226,7 @@ fn final_message_stream(
                 .with_provider_id(provider_id),
             message,
             tool_results: Vec::new(),
+            usage: None,
         }),
     ]))
 }
@@ -368,6 +379,7 @@ async fn overlapping_turns_should_return_busy_session() {
                         .with_provider_id(test_provider_descriptor().id),
                     message: Message::assistant("released"),
                     tool_results: Vec::new(),
+                    usage: None,
                 }));
             });
             stream_from_receiver(rx)
@@ -423,6 +435,146 @@ async fn event_subscription_should_receive_events_in_order() {
         events
             .windows(2)
             .all(|pair| pair[1].sequence() > pair[0].sequence())
+    );
+}
+
+#[tokio::test]
+async fn prompt_should_accumulate_turn_and_session_usage() {
+    let (provider, _) = RecordingProvider::new(|request| {
+        let session_id = request
+            .session
+            .id
+            .clone()
+            .expect("test requests always include a session id");
+        let provider_id = test_provider_descriptor().id;
+        let turn_id = request.turn.id;
+
+        Box::pin(stream::iter(vec![
+            Ok(AgentEvent::Custom {
+                meta: EventMetadata::new(1, 1)
+                    .with_session_id(session_id.clone())
+                    .with_turn_id(turn_id.clone())
+                    .with_provider_id(provider_id.clone()),
+                event_type: "usage".to_owned(),
+                payload: json!({
+                    "input_tokens": 10,
+                    "output_tokens": 4,
+                    "total_tokens": 14,
+                    "output_details": {
+                        "reasoning": 2
+                    }
+                }),
+            }),
+            Ok(AgentEvent::MessageEnd {
+                meta: EventMetadata::new(2, 2)
+                    .with_session_id(session_id.clone())
+                    .with_turn_id(turn_id.clone())
+                    .with_provider_id(provider_id.clone()),
+                message: Message::assistant("usage"),
+            }),
+            Ok(AgentEvent::TurnEnd {
+                meta: EventMetadata::new(3, 3)
+                    .with_session_id(session_id)
+                    .with_turn_id(turn_id)
+                    .with_provider_id(provider_id),
+                message: Message::assistant("usage"),
+                tool_results: Vec::new(),
+                usage: None,
+            }),
+        ]))
+    });
+    let agent = Agent::builder()
+        .provider(provider)
+        .model("mock-model")
+        .build()
+        .expect("agent should build");
+    let mut subscription = agent.subscribe();
+
+    let first = agent
+        .prompt("first")
+        .await
+        .expect("first prompt should succeed");
+    let first_events = collect_until_agent_end(&mut subscription, 1).await;
+    let second = agent
+        .prompt("second")
+        .await
+        .expect("second prompt should succeed");
+    let second_events = collect_until_agent_end(&mut subscription, 1).await;
+
+    assert_eq!(
+        first.usage.as_ref().and_then(|usage| usage.total_tokens),
+        Some(14)
+    );
+    assert_eq!(
+        second.usage.as_ref().and_then(|usage| usage.total_tokens),
+        Some(28)
+    );
+    let first_turn_usage = first_events.iter().find_map(|event| match event {
+        AgentEvent::TurnEnd { usage, .. } => usage.clone(),
+        _ => None,
+    });
+    let second_turn_usage = second_events.iter().find_map(|event| match event {
+        AgentEvent::TurnEnd { usage, .. } => usage.clone(),
+        _ => None,
+    });
+    assert_eq!(
+        first_turn_usage
+            .as_ref()
+            .and_then(|usage| usage.total_tokens),
+        Some(14)
+    );
+    assert_eq!(
+        second_turn_usage
+            .as_ref()
+            .and_then(|usage| usage.total_tokens),
+        Some(14)
+    );
+}
+
+#[tokio::test]
+async fn capability_validation_should_emit_warning_events_at_turn_entry() {
+    let descriptor = ProviderDescriptor::new(
+        ProviderId::new("mock-core-limited"),
+        ProviderFamily::Custom("mock-core-limited".to_owned()),
+        ProviderCapabilities::new()
+            .with_streaming(true)
+            .with_generate(true),
+    );
+    let (provider, _) = RecordingProvider::new_with_descriptor(descriptor, |request| {
+        final_message_stream(&request, Message::assistant("done"))
+    });
+    let agent = Agent::builder()
+        .provider(provider)
+        .tool(EchoTool {
+            started: None,
+            started_flag: None,
+            release: None,
+        })
+        .model("mock-model")
+        .build()
+        .expect("agent should build");
+    let mut subscription = agent.subscribe();
+
+    let _response = agent.prompt("hello").await.expect("prompt should succeed");
+    let events = collect_until_agent_end(&mut subscription, 1).await;
+    let warning_payloads = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Custom {
+                event_type,
+                payload,
+                ..
+            } if event_type == "capability_warning" => Some(payload.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(warning_payloads.is_empty(), false);
+    assert_eq!(
+        warning_payloads
+            .iter()
+            .any(|payload| payload["capability"] == "tool_calls"),
+        true
     );
 }
 

@@ -5,8 +5,11 @@
 
 mod contract_tests;
 mod descriptor;
+mod discovery;
 mod error;
+mod family;
 mod process;
+mod reasoning;
 mod registry;
 mod replay;
 mod request;
@@ -19,18 +22,40 @@ pub use crate::{
         ProviderContractTests,
     },
     descriptor::{
+        CapabilityWarning,
         ProviderCapabilities,
         ProviderDescriptor,
         ProviderFamily,
+        messages_have_image_inputs,
+        validate_capabilities,
+    },
+    discovery::{
+        ModelCost,
+        ModelDiscoveryService,
+        ModelInfo,
     },
     error::ProviderError,
+    family::{
+        ResolvedProviderFamily,
+        resolve_provider_family,
+    },
     process::{
         ManagedProcess,
         ProcessConfig,
         ProcessManager,
         RestartPolicy,
     },
-    registry::ProviderRegistry,
+    reasoning::{
+        XHIGH_CAPABLE_MODEL_IDS,
+        map_max_thinking_tokens_to_reasoning_effort,
+        resolve_claude_max_thinking_tokens,
+        resolve_reasoning_for_provider,
+        supports_xhigh_reasoning,
+    },
+    registry::{
+        ProviderRegistry,
+        infer_provider_id,
+    },
     replay::{
         ReplayWriter,
         ReplayWriterConfig,

@@ -19,6 +19,7 @@ use arky_session::{
     SessionSnapshot,
     SessionStore,
 };
+use arky_usage::UsageAggregator;
 use serde_json::{
     Value,
     json,
@@ -36,6 +37,7 @@ pub struct SessionState {
     pub provider_session_id: Option<String>,
     pub next_event_sequence: u64,
     pub next_turn_sequence: u64,
+    pub usage: UsageAggregator,
 }
 
 impl SessionState {
@@ -81,6 +83,7 @@ pub async fn create_session(
         provider_session_id: None,
         next_event_sequence: 1,
         next_turn_sequence: 1,
+        usage: UsageAggregator::new(),
     };
 
     apply_session_start(
@@ -158,6 +161,7 @@ fn session_state_from_snapshot(snapshot: SessionSnapshot) -> SessionState {
         provider_session_id,
         next_event_sequence,
         next_turn_sequence,
+        usage: UsageAggregator::new(),
     }
 }
 

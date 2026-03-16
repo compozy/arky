@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use arky_codex::{
     ApprovalMode,
+    CodexProcessConfig,
     CodexProvider,
     CodexProviderConfig,
 };
@@ -35,7 +36,10 @@ async fn codex_provider_should_work_with_a_real_app_server_when_opted_in() {
         std::env::var("ARKY_CODEX_REAL_BINARY").unwrap_or_else(|_| "codex".to_owned());
     let provider = CodexProvider::with_config(CodexProviderConfig {
         binary,
-        allow_npx: false,
+        process: CodexProcessConfig {
+            allow_npx: false,
+            ..CodexProcessConfig::default()
+        },
         request_timeout: Duration::from_secs(120),
         scheduler_timeout: Duration::from_secs(120),
         approval_mode: ApprovalMode::AutoApprove,

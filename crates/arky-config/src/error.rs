@@ -14,6 +14,7 @@ use thiserror::Error;
 pub struct ValidationIssue {
     field: String,
     message: String,
+    suggestion: Option<String>,
 }
 
 impl ValidationIssue {
@@ -23,7 +24,15 @@ impl ValidationIssue {
         Self {
             field: field.into(),
             message: message.into(),
+            suggestion: None,
         }
+    }
+
+    /// Attaches a correction suggestion to the issue.
+    #[must_use]
+    pub fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self {
+        self.suggestion = Some(suggestion.into());
+        self
     }
 
     /// Returns the field path that failed validation.
@@ -36,6 +45,12 @@ impl ValidationIssue {
     #[must_use]
     pub const fn message(&self) -> &str {
         self.message.as_str()
+    }
+
+    /// Returns a suggested correction when one exists.
+    #[must_use]
+    pub fn suggestion(&self) -> Option<&str> {
+        self.suggestion.as_deref()
     }
 }
 
@@ -138,6 +153,7 @@ impl ClassifiedError for ConfigError {
                     json!({
                         "field": issue.field(),
                         "message": issue.message(),
+                        "suggestion": issue.suggestion(),
                     })
                 }).collect::<Vec<_>>(),
             }),

@@ -9,6 +9,7 @@ mod message;
 mod request;
 mod session;
 mod tool;
+mod utils;
 
 pub use crate::{
     event::{
@@ -31,6 +32,7 @@ pub use crate::{
     request::{
         AgentResponse,
         ErrorPayload,
+        FinishReason,
         GenerateResponse,
         HookContext,
         InputTokenDetails,
@@ -38,6 +40,7 @@ pub use crate::{
         OutputTokenDetails,
         ProviderRequest,
         ProviderSettings,
+        ReasoningEffort,
         SessionRef,
         ToolContext,
         ToolDefinition,
@@ -53,5 +56,11 @@ pub use crate::{
         ToolCall,
         ToolContent,
         ToolResult,
+    },
+    utils::{
+        extract_text_from_events,
+        extract_tool_results,
+        extract_tool_uses,
+        extract_usage,
     },
 };

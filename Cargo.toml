@@ -14,6 +14,7 @@ members = [
     "crates/arky-session",
     "crates/arky-tools",
     "crates/arky-tools-macros",
+    "crates/arky-usage",
 ]
 resolver = "3"
 
@@ -40,6 +41,7 @@ arky-server = { path = "crates/arky-server" }
 arky-session = { path = "crates/arky-session" }
 arky-tools = { path = "crates/arky-tools" }
 arky-tools-macros = { path = "crates/arky-tools-macros" }
+arky-usage = { path = "crates/arky-usage" }
 
 # Async runtime
 tokio = { version = "1", features = [

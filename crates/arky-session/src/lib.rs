@@ -5,6 +5,7 @@
 //! durable runtime use.
 
 mod error;
+mod key;
 mod memory;
 mod snapshot;
 #[cfg(feature = "sqlite")]
@@ -19,6 +20,7 @@ pub use crate::sqlite::{
 };
 pub use crate::{
     error::SessionError,
+    key::SessionKey,
     memory::{
         InMemorySessionStore,
         InMemorySessionStoreConfig,

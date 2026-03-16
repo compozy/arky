@@ -43,6 +43,12 @@ struct ActiveToolBlock {
     parent_tool_call_id: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActiveReasoningBlock {
+    reasoning_id: String,
+    full_text: String,
+}
+
 /// Normalized text delta.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaudeTextDeltaEvent {
@@ -50,6 +56,37 @@ pub struct ClaudeTextDeltaEvent {
     pub source: ClaudeEventSource,
     /// Text delta content.
     pub text: String,
+}
+
+/// Normalized reasoning-start event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaudeReasoningStartEvent {
+    /// Event source.
+    pub source: ClaudeEventSource,
+    /// Stable reasoning identifier.
+    pub reasoning_id: String,
+}
+
+/// Normalized reasoning delta event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaudeReasoningDeltaEvent {
+    /// Event source.
+    pub source: ClaudeEventSource,
+    /// Stable reasoning identifier.
+    pub reasoning_id: String,
+    /// Incremental reasoning text.
+    pub text: String,
+}
+
+/// Normalized reasoning completion event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaudeReasoningCompleteEvent {
+    /// Event source.
+    pub source: ClaudeEventSource,
+    /// Stable reasoning identifier.
+    pub reasoning_id: String,
+    /// Fully accumulated reasoning text.
+    pub full_text: String,
 }
 
 /// Normalized tool-start event.
@@ -169,6 +206,12 @@ pub struct ClaudeFinishEvent {
 pub enum ClaudeNormalizedEvent {
     /// Plain text delta.
     TextDelta(ClaudeTextDeltaEvent),
+    /// Reasoning stream start.
+    ReasoningStart(ClaudeReasoningStartEvent),
+    /// Reasoning text delta.
+    ReasoningDelta(ClaudeReasoningDeltaEvent),
+    /// Reasoning stream completion.
+    ReasoningComplete(ClaudeReasoningCompleteEvent),
     /// Tool invocation start.
     ToolUseStart(ClaudeToolUseStartEvent),
     /// Tool input fragment.
@@ -191,6 +234,7 @@ pub enum ClaudeNormalizedEvent {
 #[derive(Debug, Default, Clone)]
 pub struct ClaudeEventParser {
     active_tools_by_block: HashMap<u64, ActiveToolBlock>,
+    active_reasoning_by_block: HashMap<u64, ActiveReasoningBlock>,
     seen_stream_tool_call_ids: HashSet<String>,
     has_seen_stream_events: bool,
     last_error_code: Option<String>,
@@ -334,59 +378,124 @@ impl ClaudeEventParser {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
             {
-                "text" => {
-                    let text = block_record
-                        .get("text")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned();
-                    events.push(ClaudeNormalizedEvent::TextDelta(ClaudeTextDeltaEvent {
-                        source: ClaudeEventSource::Assistant,
-                        text,
-                    }));
+                "text" => Self::push_assistant_text(block_record, &mut events),
+                "thinking" => {
+                    self.push_assistant_reasoning(block_record, &mut events);
                 }
                 "tool_use" => {
-                    let tool_call_id = required_string(block_record, "id", block)?;
-                    if self.has_seen_stream_events
-                        && self.seen_stream_tool_call_ids.contains(&tool_call_id)
-                    {
-                        continue;
-                    }
-
-                    let tool_name = required_string(block_record, "name", block)?;
-                    let input = block_record
-                        .get("input")
-                        .cloned()
-                        .unwrap_or_else(|| json!({}));
-                    let input_snapshot = serialize_json(&input);
-                    let parent_tool_call_id = extract_parent_tool_call_id(block_record)
-                        .or_else(|| extract_parent_tool_call_id(record));
-
-                    events.push(ClaudeNormalizedEvent::ToolUseStart(
-                        ClaudeToolUseStartEvent {
-                            source: ClaudeEventSource::Assistant,
-                            tool_call_id: tool_call_id.clone(),
-                            tool_name: tool_name.clone(),
-                            input: input.clone(),
-                            input_snapshot: input_snapshot.clone(),
-                            parent_tool_call_id: parent_tool_call_id.clone(),
-                        },
-                    ));
-                    events.push(ClaudeNormalizedEvent::ToolUseComplete(
-                        ClaudeToolUseCompleteEvent {
-                            source: ClaudeEventSource::Assistant,
-                            tool_call_id,
-                            tool_name,
-                            final_input: input_snapshot,
-                            parent_tool_call_id,
-                        },
-                    ));
+                    self.push_assistant_tool_use(
+                        record,
+                        block_record,
+                        block,
+                        &mut events,
+                    )?;
                 }
                 _ => {}
             }
         }
 
         Ok(events)
+    }
+
+    fn push_assistant_text(
+        block_record: &Map<String, Value>,
+        events: &mut Vec<ClaudeNormalizedEvent>,
+    ) {
+        let text = block_record
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        events.push(ClaudeNormalizedEvent::TextDelta(ClaudeTextDeltaEvent {
+            source: ClaudeEventSource::Assistant,
+            text,
+        }));
+    }
+
+    fn push_assistant_reasoning(
+        &self,
+        block_record: &Map<String, Value>,
+        events: &mut Vec<ClaudeNormalizedEvent>,
+    ) {
+        if self.has_seen_stream_events {
+            return;
+        }
+
+        let text = block_record
+            .get("thinking")
+            .and_then(Value::as_str)
+            .or_else(|| block_record.get("text").and_then(Value::as_str))
+            .unwrap_or_default()
+            .to_owned();
+        let reasoning_id = normalize_optional_string(block_record.get("id"))
+            .unwrap_or_else(|| format!("reasoning-{}", events.len() + 1));
+        events.push(ClaudeNormalizedEvent::ReasoningStart(
+            ClaudeReasoningStartEvent {
+                source: ClaudeEventSource::Assistant,
+                reasoning_id: reasoning_id.clone(),
+            },
+        ));
+        if !text.is_empty() {
+            events.push(ClaudeNormalizedEvent::ReasoningDelta(
+                ClaudeReasoningDeltaEvent {
+                    source: ClaudeEventSource::Assistant,
+                    reasoning_id: reasoning_id.clone(),
+                    text: text.clone(),
+                },
+            ));
+        }
+        events.push(ClaudeNormalizedEvent::ReasoningComplete(
+            ClaudeReasoningCompleteEvent {
+                source: ClaudeEventSource::Assistant,
+                reasoning_id,
+                full_text: text,
+            },
+        ));
+    }
+
+    fn push_assistant_tool_use(
+        &self,
+        record: &Map<String, Value>,
+        block_record: &Map<String, Value>,
+        block: &Value,
+        events: &mut Vec<ClaudeNormalizedEvent>,
+    ) -> Result<(), ProviderError> {
+        let tool_call_id = required_string(block_record, "id", block)?;
+        if self.has_seen_stream_events
+            && self.seen_stream_tool_call_ids.contains(&tool_call_id)
+        {
+            return Ok(());
+        }
+
+        let tool_name = required_string(block_record, "name", block)?;
+        let input = block_record
+            .get("input")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        let input_snapshot = serialize_json(&input);
+        let parent_tool_call_id = extract_parent_tool_call_id(block_record)
+            .or_else(|| extract_parent_tool_call_id(record));
+
+        events.push(ClaudeNormalizedEvent::ToolUseStart(
+            ClaudeToolUseStartEvent {
+                source: ClaudeEventSource::Assistant,
+                tool_call_id: tool_call_id.clone(),
+                tool_name: tool_name.clone(),
+                input,
+                input_snapshot: input_snapshot.clone(),
+                parent_tool_call_id: parent_tool_call_id.clone(),
+            },
+        ));
+        events.push(ClaudeNormalizedEvent::ToolUseComplete(
+            ClaudeToolUseCompleteEvent {
+                source: ClaudeEventSource::Assistant,
+                tool_call_id,
+                tool_name,
+                final_input: input_snapshot,
+                parent_tool_call_id,
+            },
+        ));
+        Ok(())
     }
 
     fn parse_user(
@@ -522,43 +631,61 @@ impl ClaudeEventParser {
             protocol_error("content_block_start is missing `content_block`", event)
         })?;
         let block_record = as_object(block)?;
-        if block_record
+        match block_record
             .get("type")
             .and_then(Value::as_str)
             .unwrap_or_default()
-            != "tool_use"
         {
-            return Ok(Vec::new());
+            "tool_use" => {
+                let tool_call_id = required_string(block_record, "id", block)?;
+                let tool_name = required_string(block_record, "name", block)?;
+                let input = block_record
+                    .get("input")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
+                let input_snapshot = serialize_json(&input);
+                self.active_tools_by_block.insert(
+                    index,
+                    ActiveToolBlock {
+                        tool_call_id: tool_call_id.clone(),
+                        tool_name: tool_name.clone(),
+                        input_snapshot: input_snapshot.clone(),
+                        parent_tool_call_id: parent_tool_call_id.clone(),
+                    },
+                );
+                self.seen_stream_tool_call_ids.insert(tool_call_id.clone());
+
+                Ok(vec![ClaudeNormalizedEvent::ToolUseStart(
+                    ClaudeToolUseStartEvent {
+                        source: ClaudeEventSource::StreamEvent,
+                        tool_call_id,
+                        tool_name,
+                        input,
+                        input_snapshot,
+                        parent_tool_call_id,
+                    },
+                )])
+            }
+            "thinking" => {
+                let reasoning_id = normalize_optional_string(block_record.get("id"))
+                    .unwrap_or_else(|| format!("reasoning-{index}"));
+                self.active_reasoning_by_block.insert(
+                    index,
+                    ActiveReasoningBlock {
+                        reasoning_id: reasoning_id.clone(),
+                        full_text: String::new(),
+                    },
+                );
+
+                Ok(vec![ClaudeNormalizedEvent::ReasoningStart(
+                    ClaudeReasoningStartEvent {
+                        source: ClaudeEventSource::StreamEvent,
+                        reasoning_id,
+                    },
+                )])
+            }
+            _ => Ok(Vec::new()),
         }
-
-        let tool_call_id = required_string(block_record, "id", block)?;
-        let tool_name = required_string(block_record, "name", block)?;
-        let input = block_record
-            .get("input")
-            .cloned()
-            .unwrap_or_else(|| json!({}));
-        let input_snapshot = serialize_json(&input);
-        self.active_tools_by_block.insert(
-            index,
-            ActiveToolBlock {
-                tool_call_id: tool_call_id.clone(),
-                tool_name: tool_name.clone(),
-                input_snapshot: input_snapshot.clone(),
-                parent_tool_call_id: parent_tool_call_id.clone(),
-            },
-        );
-        self.seen_stream_tool_call_ids.insert(tool_call_id.clone());
-
-        Ok(vec![ClaudeNormalizedEvent::ToolUseStart(
-            ClaudeToolUseStartEvent {
-                source: ClaudeEventSource::StreamEvent,
-                tool_call_id,
-                tool_name,
-                input,
-                input_snapshot,
-                parent_tool_call_id,
-            },
-        )])
     }
 
     fn parse_stream_content_block_delta(
@@ -615,6 +742,27 @@ impl ClaudeEventParser {
                     },
                 )])
             }
+            "thinking_delta" => {
+                let delta_text = delta_record
+                    .get("thinking")
+                    .and_then(Value::as_str)
+                    .or_else(|| delta_record.get("text").and_then(Value::as_str))
+                    .unwrap_or_default()
+                    .to_owned();
+                let Some(reasoning) = self.active_reasoning_by_block.get_mut(&index)
+                else {
+                    return Ok(Vec::new());
+                };
+                reasoning.full_text.push_str(&delta_text);
+
+                Ok(vec![ClaudeNormalizedEvent::ReasoningDelta(
+                    ClaudeReasoningDeltaEvent {
+                        source: ClaudeEventSource::StreamEvent,
+                        reasoning_id: reasoning.reasoning_id.clone(),
+                        text: delta_text,
+                    },
+                )])
+            }
             _ => Ok(Vec::new()),
         }
     }
@@ -630,20 +778,56 @@ impl ClaudeEventParser {
             .ok_or_else(|| {
                 protocol_error("content_block_stop is missing `index`", event)
             })?;
-        let Some(tool) = self.active_tools_by_block.remove(&index) else {
+        if let Some(tool) = self.active_tools_by_block.remove(&index) {
+            return Ok(vec![ClaudeNormalizedEvent::ToolUseComplete(
+                ClaudeToolUseCompleteEvent {
+                    source: ClaudeEventSource::StreamEvent,
+                    tool_call_id: tool.tool_call_id,
+                    tool_name: tool.tool_name,
+                    final_input: tool.input_snapshot,
+                    parent_tool_call_id: tool.parent_tool_call_id,
+                },
+            )]);
+        }
+
+        let Some(reasoning) = self.active_reasoning_by_block.remove(&index) else {
             return Ok(Vec::new());
         };
 
-        Ok(vec![ClaudeNormalizedEvent::ToolUseComplete(
-            ClaudeToolUseCompleteEvent {
+        Ok(vec![ClaudeNormalizedEvent::ReasoningComplete(
+            ClaudeReasoningCompleteEvent {
                 source: ClaudeEventSource::StreamEvent,
-                tool_call_id: tool.tool_call_id,
-                tool_name: tool.tool_name,
-                final_input: tool.input_snapshot,
-                parent_tool_call_id: tool.parent_tool_call_id,
+                reasoning_id: reasoning.reasoning_id,
+                full_text: reasoning.full_text,
             },
         )])
     }
+}
+
+const MIN_TRUNCATION_BUFFER_LEN: usize = 512;
+
+/// Detects whether a parser/protocol error looks like an in-flight Claude truncation.
+#[must_use]
+pub fn is_claude_truncation_error(
+    error: &ProviderError,
+    buffered_text: impl AsRef<str>,
+) -> bool {
+    let buffered_text = buffered_text.as_ref();
+    if buffered_text.len() < MIN_TRUNCATION_BUFFER_LEN {
+        return false;
+    }
+
+    let lower = error.to_string().to_ascii_lowercase();
+    [
+        "unexpected eof",
+        "unexpected end of input",
+        "unexpected end of string",
+        "unterminated string",
+        "eof while parsing",
+        "end of file while parsing",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 fn parse_usage(value: Option<&Value>) -> Usage {
@@ -821,6 +1005,7 @@ mod tests {
     use super::{
         ClaudeEventParser,
         ClaudeNormalizedEvent,
+        is_claude_truncation_error,
     };
 
     fn fixture_path(name: &str) -> PathBuf {
@@ -889,6 +1074,9 @@ mod tests {
                 .iter()
                 .map(|event| match event {
                     ClaudeNormalizedEvent::TextDelta(_) => "text",
+                    ClaudeNormalizedEvent::ReasoningStart(_) => "reasoning_start",
+                    ClaudeNormalizedEvent::ReasoningDelta(_) => "reasoning_delta",
+                    ClaudeNormalizedEvent::ReasoningComplete(_) => "reasoning_complete",
                     ClaudeNormalizedEvent::ToolUseStart(_) => "tool_start",
                     ClaudeNormalizedEvent::ToolUseInputDelta(_) => "tool_input",
                     ClaudeNormalizedEvent::ToolUseComplete(_) => "tool_complete",
@@ -1000,5 +1188,71 @@ mod tests {
 
         assert_eq!(rate_limit.session_id.as_deref(), Some("session-rate"));
         assert_eq!(rate_limit.rate_limit_info["status"], "allowed");
+    }
+
+    #[test]
+    fn parser_should_normalize_thinking_blocks() {
+        let mut parser = ClaudeEventParser::new();
+        let events = vec![
+            json!({
+                "type": "stream_event",
+                "event": {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {
+                        "type": "thinking",
+                        "id": "reasoning-1"
+                    }
+                }
+            }),
+            json!({
+                "type": "stream_event",
+                "event": {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {
+                        "type": "thinking_delta",
+                        "thinking": "plan step"
+                    }
+                }
+            }),
+            json!({
+                "type": "stream_event",
+                "event": {
+                    "type": "content_block_stop",
+                    "index": 0
+                }
+            }),
+        ]
+        .into_iter()
+        .flat_map(|value| parser.parse_value(&value).expect("value should parse"))
+        .collect::<Vec<_>>();
+
+        assert!(matches!(
+            &events[0],
+            ClaudeNormalizedEvent::ReasoningStart(event)
+                if event.reasoning_id == "reasoning-1"
+        ));
+        assert!(matches!(
+            &events[1],
+            ClaudeNormalizedEvent::ReasoningDelta(event)
+                if event.text == "plan step"
+        ));
+        assert!(matches!(
+            &events[2],
+            ClaudeNormalizedEvent::ReasoningComplete(event)
+                if event.full_text == "plan step"
+        ));
+    }
+
+    #[test]
+    fn parser_should_detect_truncation_errors_only_with_enough_buffered_text() {
+        let error = ProviderError::protocol_violation(
+            "failed to parse Claude stream-json line: EOF while parsing a string",
+            None,
+        );
+
+        assert_eq!(is_claude_truncation_error(&error, "x".repeat(600)), true);
+        assert_eq!(is_claude_truncation_error(&error, "short"), false);
     }
 }

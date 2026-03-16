@@ -7,6 +7,7 @@ use std::{
 
 use arky_codex::{
     ApprovalMode,
+    CodexProcessConfig,
     CodexProvider,
     CodexProviderConfig,
 };
@@ -70,12 +71,40 @@ async fn codex_provider_should_report_process_crashes_from_the_app_server() {
         .expect("turn start should be valid");
     assert!(matches!(first, AgentEvent::TurnStart { .. }));
 
-    let error = stream
-        .next()
-        .await
-        .expect("crash should surface as a stream item")
-        .expect_err("fixture crash should fail the stream");
+    let mut error = None;
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(AgentEvent::Custom { event_type, .. })
+                if matches!(
+                    event_type.as_str(),
+                    "stream-start" | "response-metadata"
+                ) => {}
+            Ok(event) => panic!("fixture crash should fail the stream: {event:?}"),
+            Err(stream_error) => {
+                error = Some(stream_error);
+                break;
+            }
+        }
+    }
+
+    let error = error.expect("crash should surface as a stream item");
     assert!(matches!(error, ProviderError::ProcessCrashed { .. }));
+}
+
+#[tokio::test]
+async fn codex_provider_should_list_models_via_shared_app_server() {
+    let tempdir = TempDir::new().expect("tempdir should create");
+    let provider = fixture_provider(&tempdir);
+
+    let models = provider
+        .list_models()
+        .await
+        .expect("model listing should succeed");
+
+    assert_eq!(models.len(), 3);
+    assert_eq!(models[0].id, "gpt-5");
+    assert_eq!(models[1].id, "o4-mini");
+    assert_eq!(models[2].id, "gpt-4o");
 }
 
 fn fixture_provider(tempdir: &TempDir) -> CodexProvider {
@@ -84,7 +113,10 @@ fn fixture_provider(tempdir: &TempDir) -> CodexProvider {
             .join("tests/fixtures/fake_codex_app_server.js")
             .display()
             .to_string(),
-        allow_npx: false,
+        process: CodexProcessConfig {
+            allow_npx: false,
+            ..CodexProcessConfig::default()
+        },
         request_timeout: Duration::from_secs(5),
         scheduler_timeout: Duration::from_secs(5),
         approval_mode: ApprovalMode::AutoApprove,

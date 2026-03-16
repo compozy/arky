@@ -68,6 +68,7 @@ impl Provider for MockProvider {
                     .with_provider_id(self.descriptor.id.clone()),
                 message,
                 tool_results: Vec::new(),
+                usage: None,
             }),
         ])))
     }

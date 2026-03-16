@@ -4,9 +4,27 @@
 //! other crate can implement common error-classification behavior without
 //! introducing cycles through `arky-core`.
 
+mod classifier;
+mod union;
+
 use std::time::Duration;
 
 use serde_json::Value;
+
+pub use crate::{
+    classifier::{
+        ClassifiedResult,
+        ErrorCategory,
+        ErrorClassifier,
+        ErrorInput,
+        ErrorPattern,
+    },
+    union::{
+        RuntimeError,
+        RuntimeErrorData,
+        RuntimeErrorKind,
+    },
+};
 
 /// Classification metadata shared by all Arky library errors.
 pub trait ClassifiedError: std::error::Error + Send + Sync {

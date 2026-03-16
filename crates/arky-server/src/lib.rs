@@ -4,6 +4,8 @@
 //! including session inspection, event streaming, and replay-oriented routes.
 
 #[cfg(feature = "server")]
+mod client;
+#[cfg(feature = "server")]
 mod error;
 #[cfg(feature = "server")]
 mod middleware;
@@ -24,7 +26,11 @@ use std::{
 #[cfg(feature = "server")]
 use axum::{
     Router,
-    routing::get,
+    middleware::from_fn_with_state,
+    routing::{
+        get,
+        post,
+    },
 };
 #[cfg(feature = "server")]
 use tokio::{
@@ -36,10 +42,12 @@ use tokio_util::sync::CancellationToken;
 
 #[cfg(feature = "server")]
 pub use crate::{
+    client::RuntimeClient,
     error::ServerError,
     state::{
         ComponentHealth,
         HealthStatus,
+        ModelCard,
         ProviderHealthSnapshot,
         ReadinessSnapshot,
         RuntimeHealthRegistry,
@@ -55,8 +63,10 @@ pub use arky_session::SessionStore;
 use crate::{
     middleware::cors_layer,
     routes::{
+        chat,
         events,
         health,
+        models,
         replay,
         sessions,
     },
@@ -84,6 +94,20 @@ pub fn router(state: ServerState) -> Router {
             get(events::stream_session_events),
         )
         .route("/sessions/{session_id}/replay", get(replay::replay_session))
+        .route(
+            "/v1/chat/stream",
+            post(chat::chat_stream).route_layer(from_fn_with_state(
+                state.clone(),
+                crate::middleware::bearer_auth,
+            )),
+        )
+        .route(
+            "/v1/models",
+            get(models::list_models).route_layer(from_fn_with_state(
+                state.clone(),
+                crate::middleware::bearer_auth,
+            )),
+        )
         .with_state(state)
         .layer(cors_layer())
 }
@@ -178,7 +202,8 @@ impl From<(Arc<arky_core::Agent>, Arc<dyn arky_session::SessionStore>)> for Serv
 }
 
 #[cfg(test)]
-mod tests {
+#[allow(dead_code, reason = "shared only by route unit tests")]
+mod test_support {
     use async_trait::async_trait;
     use futures::stream;
 

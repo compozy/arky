@@ -14,6 +14,7 @@ use crate::{
     ToolCall,
     ToolResult,
     TurnId,
+    Usage,
 };
 
 /// Metadata attached to every emitted event.
@@ -197,6 +198,9 @@ pub enum AgentEvent {
         message: Message,
         /// Tool results emitted during the turn.
         tool_results: Vec<ToolResult>,
+        /// Usage accumulated for the completed turn.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<Usage>,
     },
     /// A message started streaming.
     MessageStart {
@@ -220,6 +224,31 @@ pub enum AgentEvent {
         meta: EventMetadata,
         /// Final message state.
         message: Message,
+    },
+    /// Reasoning or extended-thinking stream started.
+    ReasoningStart {
+        /// Shared event metadata.
+        meta: EventMetadata,
+        /// Stable reasoning block identifier.
+        reasoning_id: String,
+    },
+    /// One reasoning delta arrived.
+    ReasoningDelta {
+        /// Shared event metadata.
+        meta: EventMetadata,
+        /// Stable reasoning block identifier.
+        reasoning_id: String,
+        /// Incremental reasoning text.
+        delta: String,
+    },
+    /// One reasoning stream completed.
+    ReasoningComplete {
+        /// Shared event metadata.
+        meta: EventMetadata,
+        /// Stable reasoning block identifier.
+        reasoning_id: String,
+        /// Fully accumulated reasoning text.
+        full_text: String,
     },
     /// Tool execution started.
     ToolExecutionStart {
@@ -279,6 +308,9 @@ impl AgentEvent {
             | Self::MessageStart { meta, .. }
             | Self::MessageUpdate { meta, .. }
             | Self::MessageEnd { meta, .. }
+            | Self::ReasoningStart { meta, .. }
+            | Self::ReasoningDelta { meta, .. }
+            | Self::ReasoningComplete { meta, .. }
             | Self::ToolExecutionStart { meta, .. }
             | Self::ToolExecutionUpdate { meta, .. }
             | Self::ToolExecutionEnd { meta, .. }
@@ -375,6 +407,7 @@ mod tests {
                 meta: sample_meta(4),
                 message: message.clone(),
                 tool_results: vec![tool_result],
+                usage: None,
             },
             AgentEvent::MessageStart {
                 meta: sample_meta(5),
@@ -389,27 +422,41 @@ mod tests {
                 meta: sample_meta(7),
                 message,
             },
-            AgentEvent::ToolExecutionStart {
+            AgentEvent::ReasoningStart {
                 meta: sample_meta(8),
+                reasoning_id: "reasoning-1".to_owned(),
+            },
+            AgentEvent::ReasoningDelta {
+                meta: sample_meta(9),
+                reasoning_id: "reasoning-1".to_owned(),
+                delta: "think".to_owned(),
+            },
+            AgentEvent::ReasoningComplete {
+                meta: sample_meta(10),
+                reasoning_id: "reasoning-1".to_owned(),
+                full_text: "thinking complete".to_owned(),
+            },
+            AgentEvent::ToolExecutionStart {
+                meta: sample_meta(11),
                 tool_call_id: tool_call.id.clone(),
                 tool_name: tool_call.name.clone(),
                 args: tool_call.input.clone(),
             },
             AgentEvent::ToolExecutionUpdate {
-                meta: sample_meta(9),
+                meta: sample_meta(12),
                 tool_call_id: tool_call.id.clone(),
                 tool_name: tool_call.name.clone(),
                 partial_result: json!({ "progress": 50 }),
             },
             AgentEvent::ToolExecutionEnd {
-                meta: sample_meta(10),
+                meta: sample_meta(13),
                 tool_call_id: tool_call.id,
                 tool_name: tool_call.name,
                 result: json!({ "content": "workspace manifest" }),
                 is_error: false,
             },
             AgentEvent::Custom {
-                meta: sample_meta(11),
+                meta: sample_meta(14),
                 event_type: "provider.custom".to_owned(),
                 payload: json!({ "trace_id": "abc123" }),
             },

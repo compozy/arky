@@ -136,7 +136,7 @@ mod tests {
         let store = Arc::new(InMemorySessionStore::default());
         let agent = Arc::new(
             Agent::builder()
-                .provider_arc(Arc::new(crate::tests::StaticProvider::new()))
+                .provider_arc(Arc::new(crate::test_support::StaticProvider::new()))
                 .session_store_arc(store.clone())
                 .model("mock-model")
                 .build()

@@ -20,6 +20,7 @@ use arky_provider::{
     ProviderRequest,
 };
 use arky_server::{
+    ModelCard,
     ProviderHealthSnapshot,
     ServerState,
     serve,
@@ -103,12 +104,24 @@ impl Provider for EchoProvider {
                     .with_provider_id(provider_id),
                 message,
                 tool_results: Vec::new(),
+                usage: None,
             }),
         ])))
     }
 }
 
 async fn spawn_server() -> (
+    Arc<Agent>,
+    Arc<InMemorySessionStore>,
+    arky_server::ServerHandle,
+    Client,
+) {
+    spawn_server_with_auth(None).await
+}
+
+async fn spawn_server_with_auth(
+    token: Option<&str>,
+) -> (
     Arc<Agent>,
     Arc<InMemorySessionStore>,
     arky_server::ServerHandle,
@@ -123,7 +136,17 @@ async fn spawn_server() -> (
             .build()
             .expect("agent should build"),
     );
-    let state = ServerState::new(agent.clone(), store.clone());
+    let mut state = ServerState::new(agent.clone(), store.clone());
+    if let Some(token) = token {
+        state = state.with_bearer_token(token);
+    }
+    state
+        .set_models(vec![ModelCard::new(
+            "mock-model",
+            "mock-server",
+            ProviderId::new("mock-server"),
+        )])
+        .await;
     state
         .health()
         .set_provider_health(ProviderHealthSnapshot::healthy(ProviderId::new(
@@ -277,6 +300,96 @@ async fn http_round_trip_should_expose_health_sessions_and_cors() {
 }
 
 #[tokio::test]
+async fn models_route_should_return_openai_compatible_payload() {
+    let (_agent, _store, handle, client) = spawn_server().await;
+
+    let models: Value = client
+        .get(format!("{}/v1/models", handle.base_url()))
+        .send()
+        .await
+        .expect("models request should succeed")
+        .json()
+        .await
+        .expect("models should deserialize");
+
+    assert_eq!(models["object"], "list");
+    assert_eq!(models["data"][0]["id"], "mock-model");
+    assert_eq!(models["data"][0]["object"], "model");
+    assert_eq!(models["data"][0]["compozy"]["provider_id"], "mock-server");
+
+    handle.shutdown().await.expect("server should stop cleanly");
+}
+
+#[tokio::test]
+async fn chat_stream_route_should_validate_auth_and_stream_sse() {
+    let (_agent, _store, handle, client) =
+        spawn_server_with_auth(Some("secret-token")).await;
+
+    let missing = client
+        .post(format!("{}/v1/chat/stream", handle.base_url()))
+        .json(&serde_json::json!({
+            "messages": [{"role":"user","content":[{"type":"text","text":"hello"}]}],
+            "model": "mock-model"
+        }))
+        .send()
+        .await
+        .expect("missing auth request should return");
+    assert_eq!(missing.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let invalid = client
+        .post(format!("{}/v1/chat/stream", handle.base_url()))
+        .bearer_auth("wrong-token")
+        .json(&serde_json::json!({
+            "messages": [{"role":"user","content":[{"type":"text","text":"hello"}]}],
+            "model": "mock-model"
+        }))
+        .send()
+        .await
+        .expect("invalid auth request should return");
+    assert_eq!(invalid.status(), reqwest::StatusCode::FORBIDDEN);
+
+    let response = client
+        .post(format!("{}/v1/chat/stream", handle.base_url()))
+        .bearer_auth("secret-token")
+        .json(&serde_json::json!({
+            "messages": [{"role":"user","content":[{"type":"text","text":"hello"}]}],
+            "model": "mock-model",
+            "session_key": "chat-1",
+            "resume_session": true
+        }))
+        .send()
+        .await
+        .expect("chat stream should connect");
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.starts_with("text/event-stream")),
+        Some(true)
+    );
+
+    let body = response.text().await.expect("sse body should read");
+    let frames = parse_sse_frames(&body);
+
+    assert!(frames.iter().any(|frame| frame.data == "[DONE]"));
+    let ids = frames
+        .iter()
+        .filter_map(|frame| frame.id.as_deref())
+        .filter_map(|id| id.parse::<u64>().ok())
+        .collect::<Vec<_>>();
+    assert_eq!(ids.windows(2).all(|window| window[0] < window[1]), true);
+    assert!(
+        frames
+            .iter()
+            .any(|frame| frame.event.as_deref() == Some("turn_end"))
+    );
+
+    handle.shutdown().await.expect("server should stop cleanly");
+}
+
+#[tokio::test]
 async fn sse_endpoint_should_stream_live_session_events() {
     let (agent, _store, handle, client) = spawn_server().await;
     let session_id = agent
@@ -350,7 +463,17 @@ async fn sse_endpoint_should_stream_live_session_events() {
             .iter()
             .any(|frame| frame.data.contains("\"type\":\"turn_end\""))
     );
-    assert!(frames.iter().any(|frame| frame.id.as_deref() == Some("1")));
+    assert_eq!(
+        frames.last().map(|frame| frame.data.as_str()),
+        Some("[DONE]")
+    );
+    let ids = frames
+        .iter()
+        .filter_map(|frame| frame.id.as_deref())
+        .filter_map(|id| id.parse::<u64>().ok())
+        .collect::<Vec<_>>();
+    assert_eq!(ids.windows(2).all(|window| window[0] < window[1]), true);
+    assert_eq!(ids.first().copied(), Some(1));
 
     handle.shutdown().await.expect("server should stop cleanly");
 }

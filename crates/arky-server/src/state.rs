@@ -7,13 +7,19 @@ use std::{
 };
 
 use arky_error::ClassifiedError;
-use arky_protocol::ProviderId;
+use arky_protocol::{
+    ProviderId,
+    SessionId,
+};
 use arky_session::SessionStore;
 use serde::{
     Deserialize,
     Serialize,
 };
-use tokio::sync::RwLock;
+use tokio::sync::{
+    Mutex,
+    RwLock,
+};
 
 /// Top-level application state shared by all handlers.
 #[derive(Clone)]
@@ -21,6 +27,10 @@ pub struct ServerState {
     agent: Arc<arky_core::Agent>,
     session_store: Arc<dyn SessionStore>,
     health: RuntimeHealthRegistry,
+    auth_token: Option<String>,
+    models: Arc<RwLock<Vec<ModelCard>>>,
+    session_keys: Arc<RwLock<BTreeMap<String, SessionId>>>,
+    chat_start_lock: Arc<Mutex<()>>,
 }
 
 impl ServerState {
@@ -34,6 +44,10 @@ impl ServerState {
             agent,
             session_store,
             health: RuntimeHealthRegistry::default(),
+            auth_token: None,
+            models: Arc::new(RwLock::new(Vec::new())),
+            session_keys: Arc::new(RwLock::new(BTreeMap::new())),
+            chat_start_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -53,6 +67,106 @@ impl ServerState {
     #[must_use]
     pub fn health(&self) -> RuntimeHealthRegistry {
         self.health.clone()
+    }
+
+    /// Stores a bearer token required by protected API routes.
+    #[must_use]
+    pub fn with_bearer_token(mut self, token: impl Into<String>) -> Self {
+        self.auth_token = Some(token.into());
+        self
+    }
+
+    /// Returns the protected API bearer token when configured.
+    #[must_use]
+    pub fn auth_token(&self) -> Option<&str> {
+        self.auth_token.as_deref()
+    }
+
+    /// Replaces the model catalog exposed by `/v1/models`.
+    pub async fn set_models(&self, models: Vec<ModelCard>) {
+        *self.models.write().await = models;
+    }
+
+    /// Lists the configured models.
+    pub async fn models(&self) -> Vec<ModelCard> {
+        self.models.read().await.clone()
+    }
+
+    /// Resolves a stable chat session mapping by caller-supplied key.
+    pub async fn session_id_for_key(&self, session_key: &str) -> Option<SessionId> {
+        self.session_keys.read().await.get(session_key).cloned()
+    }
+
+    /// Stores a stable chat session mapping.
+    pub async fn set_session_key(
+        &self,
+        session_key: impl Into<String>,
+        session_id: SessionId,
+    ) {
+        self.session_keys
+            .write()
+            .await
+            .insert(session_key.into(), session_id);
+    }
+
+    /// Returns the guard used to serialize chat-session routing and turn starts.
+    #[must_use]
+    pub fn chat_start_lock(&self) -> Arc<Mutex<()>> {
+        Arc::clone(&self.chat_start_lock)
+    }
+}
+
+/// Model metadata exposed by the server's model-listing endpoint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelCard {
+    /// Model identifier.
+    pub id: String,
+    /// Provider owner or family label.
+    pub owned_by: String,
+    /// Creation timestamp used by OpenAI-compatible responses.
+    pub created: u64,
+    /// Provider identifier.
+    pub provider_id: ProviderId,
+    /// Optional user-facing display name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// Optional model context window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    /// Optional max output token budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
+    /// Whether the model supports tools.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_tools: Option<bool>,
+    /// Whether the model supports reasoning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_reasoning: Option<bool>,
+    /// Optional free-form description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+impl ModelCard {
+    /// Creates a minimal model card.
+    #[must_use]
+    pub fn new(
+        id: impl Into<String>,
+        owned_by: impl Into<String>,
+        provider_id: ProviderId,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            owned_by: owned_by.into(),
+            created: 0,
+            provider_id,
+            display_name: None,
+            context_window: None,
+            max_output_tokens: None,
+            supports_tools: None,
+            supports_reasoning: None,
+            description: None,
+        }
     }
 }
 
