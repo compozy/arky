@@ -8,9 +8,16 @@ Accepted
 
 2026-03-15
 
+## Porting Context
+
+This ADR uses the TypeScript provider stack in `../compozy-code/providers` as
+upstream reference material. Use `../porting-reference.md` to find the closest
+packages and files, but prefer the Rust decision recorded here when it
+intentionally improves on the upstream design.
+
 ## Context
 
-We are building a Rust SDK (codename "Arky") for creating AI agents with multiple LLM providers. The SDK will be a port of the TypeScript providers/\* packages, inspired by the Pi agent framework. We need to decide the package structure.
+We are building a Rust SDK (codename "Arky") for creating AI agents with multiple LLM providers. The TypeScript `providers/*` packages are the closest upstream implementation reference, and the Pi agent framework is a secondary architectural influence. We need to decide the package structure.
 
 The SDK will live in a separate repository at `~/dev/compozy/arky`, decoupled from the main compozy-code monorepo.
 

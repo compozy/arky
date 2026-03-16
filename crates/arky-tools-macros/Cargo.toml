@@ -17,3 +17,14 @@ proc-macro2 = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+arky-protocol.workspace = true
+arky-tools.workspace = true
+pretty_assertions.workspace = true
+schemars.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio-util.workspace = true
+trybuild = "1.0.116"

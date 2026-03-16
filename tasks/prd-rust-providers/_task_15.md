@@ -1,6 +1,6 @@
 ## markdown
 
-## status: pending
+## status: completed
 
 <task_context>
 <domain>engine/examples</domain>
@@ -18,10 +18,23 @@ Create a comprehensive, progressive examples suite for the Arky SDK following th
 
 The Pi SDK examples (01-minimal through 12-full-control) serve as the structural reference. The Arky examples must cover the equivalent surface area in Rust: agent creation, model/provider selection, custom tools, hooks/extensions, MCP integration, session management, streaming events, and full-control construction.
 
+## Porting Context
+
+This task uses the example coverage in the upstream provider packages
+`../compozy-code/providers/claude-code`,
+`../compozy-code/providers/codex`, and
+`../compozy-code/providers/opencode`, while following the structure of the Pi
+SDK examples, as the main upstream reference for coverage and progression. Do
+not copy the TypeScript example APIs mechanically; adapt them to the stronger
+Rust surface defined in this PRD. Before implementation, read
+`tasks/prd-rust-providers/porting-reference.md` and inspect the Task 15.0
+upstream files listed there.
+
 <critical>
 - **ALWAYS READ** @AGENTS.md before start - **MANDATORY SKILLS** must be checked for your domain
 - **ALWAYS READ** the technical docs from this PRD before start (techspec.md)
 - **ALWAYS READ** the Pi SDK examples at `.resources/pi/packages/coding-agent/examples/sdk/` for structural reference
+- **ALWAYS READ** `tasks/prd-rust-providers/porting-reference.md` and inspect the Task 15.0 upstream TypeScript files before implementation
 - **YOU CAN ONLY** finish when `cargo fmt && cargo clippy -D warnings && cargo test` pass
 - **IF YOU DON'T CHECK SKILLS** your task will be invalid
 </critical>
@@ -40,21 +53,21 @@ The Pi SDK examples (01-minimal through 12-full-control) serve as the structural
 
 ## Subtasks
 
-- [ ] 15.1 Create `~/dev/compozy/arky/examples/` directory and `README.md` with progression overview
-- [ ] 15.2 Create `01_minimal.rs` — Simplest agent usage with all defaults (equivalent to Pi's 01-minimal)
-- [ ] 15.3 Create `02_custom_provider.rs` — Provider selection and model configuration (equivalent to Pi's 02-custom-model)
-- [ ] 15.4 Create `03_system_prompt.rs` — Custom system prompt injection (equivalent to Pi's 03-custom-prompt)
-- [ ] 15.5 Create `04_custom_tools.rs` — Custom tool creation with `#[tool]` macro and manual `Tool` impl (equivalent to Pi's 05-tools)
-- [ ] 15.6 Create `05_tool_registry.rs` — Tool registry management: built-in tools, call-scoped tools, collision handling
-- [ ] 15.7 Create `06_hooks.rs` — Hook lifecycle: before/after tool call, session start/end, stop decision (equivalent to Pi's 06-extensions)
-- [ ] 15.8 Create `07_event_streaming.rs` — Event subscription and streaming consumption with `subscribe()` (event handling pattern from all Pi examples)
-- [ ] 15.9 Create `08_mcp_integration.rs` — MCP client connection, tool import, and MCP server exposure
-- [ ] 15.10 Create `09_sessions.rs` — Session management: in-memory, SQLite persistence, resume, replay (equivalent to Pi's 11-sessions)
-- [ ] 15.11 Create `10_steering_followup.rs` — Mid-conversation steering and follow-up patterns
-- [ ] 15.12 Create `11_server_exposure.rs` — HTTP/SSE server exposing agent runtime (health, sessions, events)
-- [ ] 15.13 Create `12_full_control.rs` — Complete manual construction: no defaults, explicit provider, tools, hooks, session store, config (equivalent to Pi's 12-full-control)
-- [ ] 15.14 Register all examples as `[[example]]` entries in `~/dev/compozy/arky/crates/arky/Cargo.toml`
-- [ ] 15.15 Verify all examples compile: `cargo build --examples`
+- [x] 15.1 Create `~/dev/compozy/arky/examples/` directory and `README.md` with progression overview
+- [x] 15.2 Create `01_minimal.rs` — Simplest agent usage with all defaults (equivalent to Pi's 01-minimal)
+- [x] 15.3 Create `02_custom_provider.rs` — Provider selection and model configuration (equivalent to Pi's 02-custom-model)
+- [x] 15.4 Create `03_system_prompt.rs` — Custom system prompt injection (equivalent to Pi's 03-custom-prompt)
+- [x] 15.5 Create `04_custom_tools.rs` — Custom tool creation with `#[tool]` macro and manual `Tool` impl (equivalent to Pi's 05-tools)
+- [x] 15.6 Create `05_tool_registry.rs` — Tool registry management: built-in tools, call-scoped tools, collision handling
+- [x] 15.7 Create `06_hooks.rs` — Hook lifecycle: before/after tool call, session start/end, stop decision (equivalent to Pi's 06-extensions)
+- [x] 15.8 Create `07_event_streaming.rs` — Event subscription and streaming consumption with `subscribe()` (event handling pattern from all Pi examples)
+- [x] 15.9 Create `08_mcp_integration.rs` — MCP client connection, tool import, and MCP server exposure
+- [x] 15.10 Create `09_sessions.rs` — Session management: in-memory, SQLite persistence, resume, replay (equivalent to Pi's 11-sessions)
+- [x] 15.11 Create `10_steering_followup.rs` — Mid-conversation steering and follow-up patterns
+- [x] 15.12 Create `11_server_exposure.rs` — HTTP/SSE server exposing agent runtime (health, sessions, events)
+- [x] 15.13 Create `12_full_control.rs` — Complete manual construction: no defaults, explicit provider, tools, hooks, session store, config (equivalent to Pi's 12-full-control)
+- [x] 15.14 Register all examples as `[[example]]` entries in `~/dev/compozy/arky/crates/arky/Cargo.toml`
+- [x] 15.15 Verify all examples compile: `cargo build --examples`
 
 ## Implementation Details
 
@@ -119,26 +132,26 @@ The Pi SDK examples (01-minimal through 12-full-control) serve as the structural
 
 ### Unit Tests (Required)
 
-- [ ] Each example file compiles without errors (`cargo build --examples`)
-- [ ] README.md exists and lists all 12 examples with descriptions
+- [x] Each example file compiles without errors (`cargo build --examples`)
+- [x] README.md exists and lists all 12 examples with descriptions
 
 ### Integration Tests (Required)
 
-- [ ] `cargo build --examples` succeeds with zero errors and zero warnings
-- [ ] Each example's `main()` function is well-formed (has correct async runtime setup, error handling)
+- [x] `cargo build --examples` succeeds with zero errors and zero warnings
+- [x] Each example's `main()` function is well-formed (has correct async runtime setup, error handling)
 
 ### Regression and Anti-Pattern Guards
 
-- [ ] Examples use `arky::prelude::*` — not direct crate imports
-- [ ] Examples handle errors with `Result` and `?` — no `unwrap()` in example code
-- [ ] Examples use `#[tokio::main]` for async entry points
-- [ ] No example depends on external state (files, databases) without setup code
+- [x] Examples use `arky::prelude::*` — not direct crate imports
+- [x] Examples handle errors with `Result` and `?` — no `unwrap()` in example code
+- [x] Examples use `#[tokio::main]` for async entry points
+- [x] No example depends on external state (files, databases) without setup code
 
 ### Verification Commands
 
-- [ ] `cargo fmt --check`
-- [ ] `cargo clippy -D warnings`
-- [ ] `cargo build --examples`
+- [x] `cargo fmt --check`
+- [x] `cargo clippy -D warnings`
+- [x] `cargo build --examples`
 
 ## Success Criteria
 

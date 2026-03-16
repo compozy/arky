@@ -8,6 +8,13 @@ Accepted
 
 2026-03-15
 
+## Porting Context
+
+This ADR uses the TypeScript provider stack in `../compozy-code/providers` as
+upstream reference material. Use `../porting-reference.md` to find the closest
+packages and files, but prefer the Rust decision recorded here when it
+intentionally improves on the upstream design.
+
 ## Context
 
 The SDK spans multiple crates, each with distinct failure modes. We need a consistent error handling strategy that:

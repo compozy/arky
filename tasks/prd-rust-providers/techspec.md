@@ -32,6 +32,33 @@ The most important corrections introduced by this revision are:
 - Canonical tool identity and lifecycle requirements promoted to first-class
   invariants instead of incidental implementation detail
 
+## Porting Context
+
+This PRD is grounded in the existing TypeScript provider stack in
+`../compozy-code/providers` (absolute path:
+`/Users/pedronauck/Dev/compozy/compozy-code/providers`).
+
+Before implementing any crate or task, read
+`tasks/prd-rust-providers/porting-reference.md`. It maps each Rust crate/task
+to the upstream TypeScript packages, directories, and files that agents should
+inspect first for behavior, edge cases, and integration details.
+
+Those upstream packages are reference material, not a ceiling on the Rust
+implementation. When the Rust tech spec and ADRs define a stronger API,
+cleaner crate boundary, or better failure model, follow the Rust design rather
+than copying TypeScript structure or limitations mechanically.
+
+Primary upstream packages for this port:
+
+- `../compozy-code/providers/core` for hooks, tool bridge, MCP helpers, and
+  error classification
+- `../compozy-code/providers/runtime` for protocol types, orchestration,
+  sessions, server behavior, and registry patterns
+- `../compozy-code/providers/claude-code` for the Claude CLI wrapper provider
+- `../compozy-code/providers/codex` for the Codex App Server provider
+- `../compozy-code/providers/opencode` as a secondary reference for additional
+  hook, streaming, and subprocess patterns
+
 ---
 
 ## System Architecture

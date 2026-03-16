@@ -8,6 +8,13 @@ Accepted
 
 2026-03-15
 
+## Porting Context
+
+This ADR uses the TypeScript provider stack in `../compozy-code/providers` as
+upstream reference material. Use `../porting-reference.md` to find the closest
+packages and files, but prefer the Rust decision recorded here when it
+intentionally improves on the upstream design.
+
 ## Context
 
 AI agent conversations are stateful — messages, tool results, and context accumulate over time. We need to decide how session state is managed and whether persistence is a first-class concern or an afterthought.

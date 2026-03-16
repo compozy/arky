@@ -1,1 +1,231 @@
-//! arky-server
+//! HTTP and SSE runtime exposure for Arky agents.
+//!
+//! Enable the `server` feature to expose Arky agents over HTTP and SSE,
+//! including session inspection, event streaming, and replay-oriented routes.
+
+#[cfg(feature = "server")]
+mod error;
+#[cfg(feature = "server")]
+mod middleware;
+#[cfg(feature = "server")]
+mod routes;
+#[cfg(feature = "server")]
+mod state;
+
+#[cfg(feature = "server")]
+use std::{
+    net::{
+        IpAddr,
+        SocketAddr,
+    },
+    sync::Arc,
+};
+
+#[cfg(feature = "server")]
+use axum::{
+    Router,
+    routing::get,
+};
+#[cfg(feature = "server")]
+use tokio::{
+    net::TcpListener,
+    sync::Mutex,
+};
+#[cfg(feature = "server")]
+use tokio_util::sync::CancellationToken;
+
+#[cfg(feature = "server")]
+pub use crate::{
+    error::ServerError,
+    state::{
+        ComponentHealth,
+        HealthStatus,
+        ProviderHealthSnapshot,
+        ReadinessSnapshot,
+        RuntimeHealthRegistry,
+        ServerState,
+        SessionCompatibility,
+    },
+};
+
+#[cfg(feature = "server")]
+pub use arky_session::SessionStore;
+
+#[cfg(feature = "server")]
+use crate::{
+    middleware::cors_layer,
+    routes::{
+        events,
+        health,
+        replay,
+        sessions,
+    },
+};
+
+#[cfg(feature = "server")]
+/// Builds the application router for the Arky runtime server.
+pub fn router(state: ServerState) -> Router {
+    Router::new()
+        .route("/health", get(health::health))
+        .route("/ready", get(health::ready))
+        .route("/providers/health", get(health::list_provider_health))
+        .route(
+            "/providers/{provider_id}/health",
+            get(health::get_provider_health),
+        )
+        .route("/sessions", get(sessions::list_sessions))
+        .route("/sessions/{session_id}", get(sessions::get_session))
+        .route(
+            "/sessions/{session_id}/messages",
+            get(sessions::get_session_messages),
+        )
+        .route(
+            "/sessions/{session_id}/events",
+            get(events::stream_session_events),
+        )
+        .route("/sessions/{session_id}/replay", get(replay::replay_session))
+        .with_state(state)
+        .layer(cors_layer())
+}
+
+#[cfg(feature = "server")]
+/// Running server handle with graceful shutdown support.
+#[derive(Debug)]
+pub struct ServerHandle {
+    local_addr: SocketAddr,
+    cancellation: CancellationToken,
+    join: Mutex<Option<tokio::task::JoinHandle<std::io::Result<()>>>>,
+}
+
+#[cfg(feature = "server")]
+impl ServerHandle {
+    /// Returns the listener address.
+    #[must_use]
+    pub const fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    /// Returns the base URL clients can use for requests.
+    #[must_use]
+    pub fn base_url(&self) -> String {
+        format!("http://{}", socket_addr_host(self.local_addr))
+    }
+
+    /// Triggers graceful shutdown and waits for the server task to finish.
+    pub async fn shutdown(&self) -> Result<(), ServerError> {
+        self.cancellation.cancel();
+        self.await_join().await
+    }
+
+    async fn await_join(&self) -> Result<(), ServerError> {
+        let join = self.join.lock().await.take();
+        let Some(join) = join else {
+            return Ok(());
+        };
+
+        match join.await {
+            Ok(result) => result.map_err(|error| ServerError::io(&error)),
+            Err(error) => Err(ServerError::internal(format!(
+                "server task crashed while shutting down: {error}"
+            ))),
+        }
+    }
+}
+
+#[cfg(feature = "server")]
+/// Starts serving the Arky runtime on the provided listener.
+pub fn serve(
+    listener: TcpListener,
+    state: ServerState,
+) -> Result<ServerHandle, ServerError> {
+    let local_addr = listener
+        .local_addr()
+        .map_err(|error| ServerError::io(&error))?;
+    let cancellation = CancellationToken::new();
+    let app = router(state);
+    let join = tokio::spawn({
+        let cancellation = cancellation.clone();
+        async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    cancellation.cancelled_owned().await;
+                })
+                .await
+                .map_err(std::io::Error::other)
+        }
+    });
+
+    Ok(ServerHandle {
+        local_addr,
+        cancellation,
+        join: Mutex::new(Some(join)),
+    })
+}
+
+#[cfg(feature = "server")]
+fn socket_addr_host(addr: SocketAddr) -> String {
+    match addr.ip() {
+        IpAddr::V4(_) => addr.to_string(),
+        IpAddr::V6(_) => format!("[{}]:{}", addr.ip(), addr.port()),
+    }
+}
+
+#[cfg(feature = "server")]
+impl From<(Arc<arky_core::Agent>, Arc<dyn arky_session::SessionStore>)> for ServerState {
+    fn from(value: (Arc<arky_core::Agent>, Arc<dyn arky_session::SessionStore>)) -> Self {
+        Self::new(value.0, value.1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use async_trait::async_trait;
+    use futures::stream;
+
+    use arky_protocol::ProviderId;
+    use arky_provider::{
+        Provider,
+        ProviderCapabilities,
+        ProviderDescriptor,
+        ProviderError,
+        ProviderEventStream,
+        ProviderFamily,
+        ProviderRequest,
+    };
+
+    pub struct StaticProvider {
+        descriptor: ProviderDescriptor,
+    }
+
+    impl StaticProvider {
+        pub fn new() -> Self {
+            Self {
+                descriptor: ProviderDescriptor::new(
+                    ProviderId::new("mock-server"),
+                    ProviderFamily::Custom("mock-server".to_owned()),
+                    ProviderCapabilities::new()
+                        .with_streaming(true)
+                        .with_generate(true)
+                        .with_tool_calls(true)
+                        .with_session_resume(true)
+                        .with_steering(true)
+                        .with_follow_up(true),
+                ),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for StaticProvider {
+        fn descriptor(&self) -> &ProviderDescriptor {
+            &self.descriptor
+        }
+
+        async fn stream(
+            &self,
+            _request: ProviderRequest,
+        ) -> Result<ProviderEventStream, ProviderError> {
+            Ok(Box::pin(stream::empty()))
+        }
+    }
+}

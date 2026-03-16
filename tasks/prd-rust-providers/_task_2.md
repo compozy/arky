@@ -1,6 +1,6 @@
 ## markdown
 
-## status: pending
+## status: completed
 
 <task_context>
 <domain>infra/protocol</domain>
@@ -16,9 +16,21 @@
 
 Implement the `arky-protocol` crate containing all shared types used across the Arky SDK: messages, events, IDs, request/response DTOs, and persisted event records. This crate is the lingua franca of the workspace — nearly every other crate depends on it. The event model must be rich enough for replay, routing, and observability while remaining a flat enum with `#[non_exhaustive]`.
 
+## Porting Context
+
+This task uses the TypeScript runtime and provider event models in
+`../compozy-code/providers/runtime`,
+`../compozy-code/providers/claude-code`, and
+`../compozy-code/providers/codex` as the main upstream reference for behavior
+and edge cases. Do not copy the TypeScript API or module layout mechanically;
+prefer the Rust architecture and quality bar defined in this PRD. Before
+implementation, read `tasks/prd-rust-providers/porting-reference.md` and
+inspect the Task 2.0 upstream files listed there.
+
 <critical>
 - **ALWAYS READ** @AGENTS.md before start - **MANDATORY SKILLS** must be checked for your domain
 - **ALWAYS READ** the technical docs from this PRD before start (techspec.md, ADR-004)
+- **ALWAYS READ** `tasks/prd-rust-providers/porting-reference.md` and inspect the Task 2.0 upstream TypeScript files before implementation
 - **YOU CAN ONLY** finish when `cargo fmt && cargo clippy -D warnings && cargo test` pass
 - **IF YOU DON'T CHECK SKILLS** your task will be invalid
 </critical>
@@ -39,16 +51,16 @@ Implement the `arky-protocol` crate containing all shared types used across the 
 
 ## Subtasks
 
-- [ ] 2.1 Define ID newtypes (`SessionId`, `ProviderId`, `TurnId`) with constructors, display, and serialization
-- [ ] 2.2 Implement `Role`, `ContentBlock`, `MessageMetadata`, and `Message` types
-- [ ] 2.3 Implement `ToolCall`, `ToolResult`, `ToolContent` types
-- [ ] 2.4 Implement `EventMetadata` struct
-- [ ] 2.5 Implement `AgentEvent` enum with all variants and `#[non_exhaustive]`
-- [ ] 2.6 Implement `StreamDelta` type for incremental streaming updates
-- [ ] 2.7 Implement persistence types: `PersistedEvent`, `TurnCheckpoint`, `ReplayCursor`
-- [ ] 2.8 Implement request/response DTOs: `ProviderRequest` fields, `GenerateResponse`, `AgentResponse`
-- [ ] 2.9 Write unit tests for serialization round-trips, event ordering, and ID generation
-- [ ] 2.10 Write unit tests for `ContentBlock` variant construction and `Message` builder patterns
+- [x] 2.1 Define ID newtypes (`SessionId`, `ProviderId`, `TurnId`) with constructors, display, and serialization
+- [x] 2.2 Implement `Role`, `ContentBlock`, `MessageMetadata`, and `Message` types
+- [x] 2.3 Implement `ToolCall`, `ToolResult`, `ToolContent` types
+- [x] 2.4 Implement `EventMetadata` struct
+- [x] 2.5 Implement `AgentEvent` enum with all variants and `#[non_exhaustive]`
+- [x] 2.6 Implement `StreamDelta` type for incremental streaming updates
+- [x] 2.7 Implement persistence types: `PersistedEvent`, `TurnCheckpoint`, `ReplayCursor`
+- [x] 2.8 Implement request/response DTOs: `ProviderRequest` fields, `GenerateResponse`, `AgentResponse`
+- [x] 2.9 Write unit tests for serialization round-trips, event ordering, and ID generation
+- [x] 2.10 Write unit tests for `ContentBlock` variant construction and `Message` builder patterns
 
 ## Implementation Details
 
@@ -80,29 +92,29 @@ Implement the `arky-protocol` crate containing all shared types used across the 
 
 ### Unit Tests (Required)
 
-- [ ] ID types: creation, display, equality, serialization round-trip
-- [ ] Message: construction with all `ContentBlock` variants, serialization round-trip
-- [ ] AgentEvent: construction of each variant, serialization round-trip, metadata population
-- [ ] EventMetadata: sequence ordering invariant documentation and helper methods
-- [ ] PersistedEvent and TurnCheckpoint: serialization round-trip
-- [ ] StreamDelta: construction and serialization
+- [x] ID types: creation, display, equality, serialization round-trip
+- [x] Message: construction with all `ContentBlock` variants, serialization round-trip
+- [x] AgentEvent: construction of each variant, serialization round-trip, metadata population
+- [x] EventMetadata: sequence ordering invariant documentation and helper methods
+- [x] PersistedEvent and TurnCheckpoint: serialization round-trip
+- [x] StreamDelta: construction and serialization
 
 ### Integration Tests (Required)
 
-- [ ] Cross-crate usage: `arky-error` types used correctly in protocol error paths
-- [ ] JSON serialization compatibility: verify event JSON shape matches expected format for downstream consumers
+- [x] Cross-crate usage: `arky-error` types used correctly in protocol error paths
+- [x] JSON serialization compatibility: verify event JSON shape matches expected format for downstream consumers
 
 ### Regression and Anti-Pattern Guards
 
-- [ ] All public enums marked `#[non_exhaustive]` where specified
-- [ ] No `unwrap()` in library code
-- [ ] All types that cross process boundaries implement `Serialize`/`Deserialize`
+- [x] All public enums marked `#[non_exhaustive]` where specified
+- [x] No `unwrap()` in library code
+- [x] All types that cross process boundaries implement `Serialize`/`Deserialize`
 
 ### Verification Commands
 
-- [ ] `cargo fmt --check`
-- [ ] `cargo clippy -D warnings`
-- [ ] `cargo test -p arky-protocol`
+- [x] `cargo fmt --check`
+- [x] `cargo clippy -D warnings`
+- [x] `cargo test -p arky-protocol`
 
 ## Success Criteria
 

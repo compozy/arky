@@ -1,0 +1,51 @@
+language: "en"
+early_access: true
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "AGENTS.md"
+      - "**/AGENTS.md"
+      - ".claude/skills/**/*.md"
+      - ".claude/rules/**/*.md"
+
+reviews:
+  request_changes_workflow: true
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  sequence_diagrams: true
+  profile: "assertive"
+  related_prs: false
+  path_filters:
+    - "!.git/**"
+    - "!.claude/**"
+    - "!.agents/**"
+    - "!.vscode/**"
+    - "!.resources/**"
+    - "!**/fixtures/**"
+    - "!**/node_modules/**"
+    - "!**/target/**"
+    - "!**/coverage/**"
+    - "!**/*.log"
+    - "!**/.env"
+    - "!**/.env.local"
+    - "!**/*.local"
+    - "!**/.tmp/**"
+    - "!**/.DS_Store"
+    - "!**/*.suo"
+    - "!**/*.sw?"
+    - "!**/*.pem"
+    - "!.idea/**"
+    - "!**/Thumbs.db"
+    - "!**/lcov.info"
+    - "!**/tarpaulin-report.html"
+    - "!.codex/**"
+    - "**/*.rs"
+    - "**/*.toml"
+    - ".github/**/*"
+    - "**/**/README.md"
+    - "README.md"
+    - "Makefile"

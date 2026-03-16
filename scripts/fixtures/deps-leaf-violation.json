@@ -1,0 +1,26 @@
+{
+  "packages": [
+    {
+      "id": "path+file:///workspace/crates/arky-error#0.1.0",
+      "name": "arky-error",
+      "dependencies": [
+        {
+          "name": "arky-core"
+        }
+      ]
+    },
+    {
+      "id": "path+file:///workspace/crates/arky-core#0.1.0",
+      "name": "arky-core",
+      "dependencies": [
+        {
+          "name": "arky-error"
+        }
+      ]
+    }
+  ],
+  "workspace_members": [
+    "path+file:///workspace/crates/arky-error#0.1.0",
+    "path+file:///workspace/crates/arky-core#0.1.0"
+  ]
+}

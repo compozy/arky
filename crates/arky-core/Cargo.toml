@@ -11,6 +11,7 @@ rust-version.workspace = true
 arky-error = { workspace = true }
 arky-config = { workspace = true }
 arky-hooks = { workspace = true }
+arky-mcp = { workspace = true }
 arky-protocol = { workspace = true }
 arky-provider = { workspace = true }
 arky-session = { workspace = true }

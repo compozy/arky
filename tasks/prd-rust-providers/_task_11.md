@@ -1,6 +1,6 @@
 ## markdown
 
-## status: pending
+## status: completed
 
 <task_context>
 <domain>engine/codex</domain>
@@ -16,9 +16,20 @@
 
 Implement the `arky-codex` crate — the second concrete provider wrapping the Codex App Server as a subprocess-backed provider using newline-delimited JSON-RPC over stdio. This provider validates the JSON-RPC transport and thread routing contracts. It must handle process lifecycle, request/response correlation, serialized model access, multi-conversation thread management, approval flow, and notification dispatch.
 
+## Porting Context
+
+This task uses the upstream Codex provider in
+`../compozy-code/providers/codex` as the main upstream reference for behavior
+and edge cases. Do not copy its API or module layout mechanically; prefer the
+Rust architecture and quality bar defined in this PRD. Before implementation,
+read `tasks/prd-rust-providers/porting-reference.md` and inspect the Task 11.0
+source list there, especially the `model/`, `server/`, `streaming/`, and
+`bridge/` files.
+
 <critical>
 - **ALWAYS READ** @AGENTS.md before start - **MANDATORY SKILLS** must be checked for your domain
 - **ALWAYS READ** the technical docs from this PRD before start (techspec.md, ADR-003, analysis_codex.md, analysis_codex_rs.md)
+- **ALWAYS READ** `tasks/prd-rust-providers/porting-reference.md` and inspect the Task 11.0 upstream TypeScript files before implementation
 - **YOU CAN ONLY** finish when `cargo fmt && cargo clippy -D warnings && cargo test` pass
 - **IF YOU DON'T CHECK SKILLS** your task will be invalid
 </critical>
@@ -41,20 +52,20 @@ Implement the `arky-codex` crate — the second concrete provider wrapping the C
 
 ## Subtasks
 
-- [ ] 11.1 Implement Codex App Server binary discovery and validation
-- [ ] 11.2 Implement subprocess spawning with correct startup parameters
-- [ ] 11.3 Implement JSON-RPC transport: request serialization, response deserialization, newline framing
-- [ ] 11.4 Implement `RpcTransport` with request/response correlation by ID
-- [ ] 11.5 Implement `Scheduler` for serialized model access
-- [ ] 11.6 Implement `ThreadManager` for multi-conversation routing
-- [ ] 11.7 Implement `NotificationRouter` for async notification dispatch to streams
-- [ ] 11.8 Implement text accumulator and tool tracker for normalized event assembly
-- [ ] 11.9 Implement approval flow handling (approve/deny tool execution requests)
-- [ ] 11.10 Implement event normalization: Codex notifications -> `AgentEvent` variants
-- [ ] 11.11 Implement `ProviderDescriptor` and `ProviderCapabilities` for Codex
-- [ ] 11.12 Pass `ProviderContractTests` shared test suite
-- [ ] 11.13 Write unit tests for JSON-RPC transport, correlation, scheduling, and thread routing
-- [ ] 11.14 Write integration tests spawning real Codex App Server (behind integration flag)
+- [x] 11.1 Implement Codex App Server binary discovery and validation
+- [x] 11.2 Implement subprocess spawning with correct startup parameters
+- [x] 11.3 Implement JSON-RPC transport: request serialization, response deserialization, newline framing
+- [x] 11.4 Implement `RpcTransport` with request/response correlation by ID
+- [x] 11.5 Implement `Scheduler` for serialized model access
+- [x] 11.6 Implement `ThreadManager` for multi-conversation routing
+- [x] 11.7 Implement `NotificationRouter` for async notification dispatch to streams
+- [x] 11.8 Implement text accumulator and tool tracker for normalized event assembly
+- [x] 11.9 Implement approval flow handling (approve/deny tool execution requests)
+- [x] 11.10 Implement event normalization: Codex notifications -> `AgentEvent` variants
+- [x] 11.11 Implement `ProviderDescriptor` and `ProviderCapabilities` for Codex
+- [x] 11.12 Pass `ProviderContractTests` shared test suite
+- [x] 11.13 Write unit tests for JSON-RPC transport, correlation, scheduling, and thread routing
+- [x] 11.14 Write integration tests spawning real Codex App Server (behind integration flag)
 
 ## Implementation Details
 
@@ -96,34 +107,34 @@ Implement the `arky-codex` crate — the second concrete provider wrapping the C
 
 ### Unit Tests (Required)
 
-- [ ] JSON-RPC transport: serialize request, deserialize response, verify correlation by ID
-- [ ] JSON-RPC framing: newline-delimited parsing of multiple messages
-- [ ] Scheduler: serialized access (second request waits until first completes)
-- [ ] ThreadManager: route messages to correct thread, stale thread detection
-- [ ] NotificationRouter: dispatch notification to correct stream consumer
-- [ ] Text accumulator: incremental text assembly from multiple notifications
-- [ ] Tool tracker: track tool call lifecycle from notifications
-- [ ] Approval flow: approve/deny tool requests, timeout handling
+- [x] JSON-RPC transport: serialize request, deserialize response, verify correlation by ID
+- [x] JSON-RPC framing: newline-delimited parsing of multiple messages
+- [x] Scheduler: serialized access (second request waits until first completes)
+- [x] ThreadManager: route messages to correct thread, stale thread detection
+- [x] NotificationRouter: dispatch notification to correct stream consumer
+- [x] Text accumulator: incremental text assembly from multiple notifications
+- [x] Tool tracker: track tool call lifecycle from notifications
+- [x] Approval flow: approve/deny tool requests, timeout handling
 
 ### Integration Tests (Required)
 
-- [ ] Spawn real Codex App Server (behind `#[cfg(feature = "integration")]`), send request, receive response
-- [ ] Thread routing end-to-end: create thread, send message, verify response routing
-- [ ] Provider contract tests: pass `ProviderContractTests` from `arky-provider`
+- [x] Spawn real Codex App Server (behind `#[cfg(feature = "integration")]`), send request, receive response
+- [x] Thread routing end-to-end: create thread, send message, verify response routing
+- [x] Provider contract tests: pass `ProviderContractTests` from `arky-provider`
 
 ### Regression and Anti-Pattern Guards
 
-- [ ] JSON-RPC desync: mismatched IDs produce `ProtocolViolation`, not data corruption
-- [ ] Process crash: handled gracefully with `ProcessCrashed` error
-- [ ] Stale thread: detected and reported as error
-- [ ] No `unwrap()` in library code
+- [x] JSON-RPC desync: mismatched IDs produce `ProtocolViolation`, not data corruption
+- [x] Process crash: handled gracefully with `ProcessCrashed` error
+- [x] Stale thread: detected and reported as error
+- [x] No `unwrap()` in library code
 
 ### Verification Commands
 
-- [ ] `cargo fmt --check`
-- [ ] `cargo clippy -D warnings`
-- [ ] `cargo test -p arky-codex`
-- [ ] `cargo test -p arky-codex --features integration` (requires Codex App Server)
+- [x] `cargo fmt --check`
+- [x] `cargo clippy -D warnings`
+- [x] `cargo test -p arky-codex`
+- [x] `cargo test -p arky-codex --features integration` (requires Codex App Server)
 
 ## Success Criteria
 

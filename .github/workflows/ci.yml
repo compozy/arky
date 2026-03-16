@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFMT_NIGHTLY: nightly-2026-03-15
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-fmt-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install nightly rustfmt
+        run: |
+          rustup toolchain install "${RUSTFMT_NIGHTLY}" --profile minimal --component rustfmt
+      - name: Check formatting
+        run: cargo +"${RUSTFMT_NIGHTLY}" fmt --all --check
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-lint-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install stable clippy
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  test:
+    name: Test Workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-test-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal
+      - name: Run workspace tests
+        run: cargo test --workspace
+
+  test-all-features:
+    name: Test All Features
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-test-all-features-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal
+      - name: Run all-features tests
+        run: cargo test --workspace --all-features
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-docs-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal
+      - name: Build workspace docs
+        run: cargo doc --no-deps --workspace
+      - name: Upload docs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: arky-docs
+          path: target/doc
+
+  hardening:
+    name: Hardening
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-hardening-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal
+      - name: Verify dependency graph
+        run: ./scripts/check-deps.sh
+      - name: Build examples
+        run: cargo build --examples
+      - name: Compile benchmarks
+        run: cargo bench --no-run

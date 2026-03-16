@@ -1,0 +1,5 @@
+error: #[tool] functions must declare an explicit return type
+ --> tests/ui/missing_return.rs:5:10
+  |
+5 | async fn missing_return() {}
+  |          ^^^^^^^^^^^^^^

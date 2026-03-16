@@ -8,6 +8,13 @@ Accepted
 
 2026-03-15
 
+## Porting Context
+
+This ADR uses the TypeScript provider stack in `../compozy-code/providers` as
+upstream reference material. Use `../porting-reference.md` to find the closest
+packages and files, but prefer the Rust decision recorded here when it
+intentionally improves on the upstream design.
+
 ## Context
 
 The tool system is the most complex subsystem in the SDK. Tools are functions that agents can call to interact with the external world (read files, search, execute commands, etc.). We need to define how consumers create, register, and execute tools.

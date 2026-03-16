@@ -1,0 +1,5 @@
+error: #[tool] tool parameters must be owned values; references are not supported
+ --> tests/ui/borrowed_argument.rs:6:12
+  |
+6 |     value: &str,
+  |            ^^^^

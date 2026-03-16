@@ -18,9 +18,11 @@ tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 regex = { workspace = true }
+futures.workspace = true
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]

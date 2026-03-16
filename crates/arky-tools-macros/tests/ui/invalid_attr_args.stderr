@@ -1,0 +1,5 @@
+error: #[tool] does not accept attribute arguments
+ --> tests/ui/invalid_attr_args.rs:3:8
+  |
+3 | #[tool(name = "custom")]
+  |        ^^^^^^^^^^^^^^^

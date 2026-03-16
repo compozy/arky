@@ -1,6 +1,6 @@
 ## markdown
 
-## status: pending
+## status: completed
 
 <task_context>
 <domain>engine/tools</domain>
@@ -16,9 +16,21 @@
 
 Implement the `arky-tools` crate providing the `Tool` trait, `ToolDescriptor`, `ToolRegistry`, canonical tool naming system, provider-specific name codecs, and lifecycle handles. Tools are a first-class concept in Arky — every imported or exposed tool has a canonical ID of the form `mcp/<server>/<tool>`, and provider-specific names are codecs, not identity. The registry must support long-lived registrations, call-scoped registrations with cleanup handles, and collision detection.
 
+## Porting Context
+
+This task uses the shared tool system in `../compozy-code/providers/core`,
+`../compozy-code/providers/runtime`, and the provider-specific tool bridges in
+`../compozy-code/providers/claude-code` and
+`../compozy-code/providers/codex` as the main upstream reference for behavior
+and edge cases. Do not copy the TypeScript API or module layout mechanically;
+prefer the Rust architecture and quality bar defined in this PRD. Before
+implementation, read `tasks/prd-rust-providers/porting-reference.md` and
+inspect the Task 4.0 upstream files listed there.
+
 <critical>
 - **ALWAYS READ** @AGENTS.md before start - **MANDATORY SKILLS** must be checked for your domain
 - **ALWAYS READ** the technical docs from this PRD before start (techspec.md, ADR-005)
+- **ALWAYS READ** `tasks/prd-rust-providers/porting-reference.md` and inspect the Task 4.0 upstream TypeScript files before implementation
 - **YOU CAN ONLY** finish when `cargo fmt && cargo clippy -D warnings && cargo test` pass
 - **IF YOU DON'T CHECK SKILLS** your task will be invalid
 </critical>
@@ -37,14 +49,14 @@ Implement the `arky-tools` crate providing the `Tool` trait, `ToolDescriptor`, `
 
 ## Subtasks
 
-- [ ] 4.1 Implement `ToolDescriptor` struct with all fields and `ToolOrigin` enum
-- [ ] 4.2 Implement `Tool` trait with `descriptor()` and `execute(ToolCall, CancellationToken)` methods
-- [ ] 4.3 Implement `ToolRegistry` with registration, lookup, listing, and collision detection
-- [ ] 4.4 Implement call-scoped registration with cleanup handles (RAII-style or explicit)
-- [ ] 4.5 Implement `ToolIdCodec` trait for canonical <-> provider-specific name round-trips
-- [ ] 4.6 Implement canonical naming validation (`mcp/<server>/<tool>` format)
-- [ ] 4.7 Implement `ToolError` enum with `ClassifiedError` implementation
-- [ ] 4.8 Write unit tests for registry operations, codec round-trips, collision detection, and cleanup handles
+- [x] 4.1 Implement `ToolDescriptor` struct with all fields and `ToolOrigin` enum
+- [x] 4.2 Implement `Tool` trait with `descriptor()` and `execute(ToolCall, CancellationToken)` methods
+- [x] 4.3 Implement `ToolRegistry` with registration, lookup, listing, and collision detection
+- [x] 4.4 Implement call-scoped registration with cleanup handles (RAII-style or explicit)
+- [x] 4.5 Implement `ToolIdCodec` trait for canonical <-> provider-specific name round-trips
+- [x] 4.6 Implement canonical naming validation (`mcp/<server>/<tool>` format)
+- [x] 4.7 Implement `ToolError` enum with `ClassifiedError` implementation
+- [x] 4.8 Write unit tests for registry operations, codec round-trips, collision detection, and cleanup handles
 
 ## Implementation Details
 
@@ -76,30 +88,30 @@ Implement the `arky-tools` crate providing the `Tool` trait, `ToolDescriptor`, `
 
 ### Unit Tests (Required)
 
-- [ ] `ToolDescriptor` construction with all `ToolOrigin` variants
-- [ ] `ToolRegistry`: register, lookup, list, remove operations
-- [ ] `ToolRegistry`: collision detection when registering duplicate canonical names
-- [ ] Call-scoped registration: tool is accessible during scope, removed after cleanup
-- [ ] `ToolIdCodec`: canonical -> provider-specific and back round-trip correctness
-- [ ] Canonical name validation: valid `mcp/server/tool` accepted, invalid formats rejected
-- [ ] `ToolError` classification: each variant returns correct error codes and retryability
+- [x] `ToolDescriptor` construction with all `ToolOrigin` variants
+- [x] `ToolRegistry`: register, lookup, list, remove operations
+- [x] `ToolRegistry`: collision detection when registering duplicate canonical names
+- [x] Call-scoped registration: tool is accessible during scope, removed after cleanup
+- [x] `ToolIdCodec`: canonical -> provider-specific and back round-trip correctness
+- [x] Canonical name validation: valid `mcp/server/tool` accepted, invalid formats rejected
+- [x] `ToolError` classification: each variant returns correct error codes and retryability
 
 ### Integration Tests (Required)
 
-- [ ] Mock `Tool` implementation registered and executed through the registry
-- [ ] Concurrent registry access: multiple reads and writes are safe (using `DashMap` or `RwLock`)
+- [x] Mock `Tool` implementation registered and executed through the registry
+- [x] Concurrent registry access: multiple reads and writes are safe (using `DashMap` or `RwLock`)
 
 ### Regression and Anti-Pattern Guards
 
-- [ ] No `unwrap()` in library code
-- [ ] `Tool` trait is `Send + Sync`
-- [ ] Registry operations are thread-safe
+- [x] No `unwrap()` in library code
+- [x] `Tool` trait is `Send + Sync`
+- [x] Registry operations are thread-safe
 
 ### Verification Commands
 
-- [ ] `cargo fmt --check`
-- [ ] `cargo clippy -D warnings`
-- [ ] `cargo test -p arky-tools`
+- [x] `cargo fmt --check`
+- [x] `cargo clippy -D warnings`
+- [x] `cargo test -p arky-tools`
 
 ## Success Criteria
 

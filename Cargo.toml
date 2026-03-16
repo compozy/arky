@@ -15,7 +15,7 @@ members = [
     "crates/arky-tools",
     "crates/arky-tools-macros",
 ]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
 version = "0.1.0"
@@ -82,7 +82,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 axum = { version = "0.8", default-features = false }
 
 # MCP
-# rmcp = "0.16"
+rmcp = "0.16"
 
 # Data structures
 dashmap = "6"
@@ -90,7 +90,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 regex = "1"
 
 # Database (feature-gated)
-rusqlite = { version = "0.32", features = ["bundled"] }
+tokio-rusqlite = "0.7"
 
 # Proc macro support
 syn = { version = "2", features = ["full", "extra-traits"] }
@@ -119,3 +119,7 @@ module_name_repetitions = "allow"
 must_use_candidate = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

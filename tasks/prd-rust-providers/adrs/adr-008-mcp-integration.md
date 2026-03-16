@@ -8,6 +8,13 @@ Accepted
 
 2026-03-15
 
+## Porting Context
+
+This ADR uses the TypeScript provider stack in `../compozy-code/providers` as
+upstream reference material. Use `../porting-reference.md` to find the closest
+packages and files, but prefer the Rust decision recorded here when it
+intentionally improves on the upstream design.
+
 ## Context
 
 The Model Context Protocol (MCP) is the emerging standard for tool interoperability between AI agents. Our TypeScript providers/core already implements MCP integration at three levels: creating MCP servers from tools (`createMcpServerFromTools`), HTTP transport (`createMcpHttpServer`), and bidirectional tool bridging (`ToolsBridge`).

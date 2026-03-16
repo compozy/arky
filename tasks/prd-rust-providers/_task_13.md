@@ -1,6 +1,6 @@
 ## markdown
 
-## status: pending
+## status: completed
 
 <task_context>
 <domain>engine/server</domain>
@@ -16,9 +16,21 @@
 
 Implement the `arky-server` crate providing an HTTP server that exposes the agent runtime state, session management, health checks, and Server-Sent Events (SSE) for real-time event delivery. This crate uses `axum` (feature-gated under `server`) and provides the external interface for monitoring, controlling, and observing running agents.
 
+## Porting Context
+
+This task uses the runtime server surface in
+`../compozy-code/providers/runtime/src/server/*`, with
+`runtime/src/client/runtime-client.ts` as a companion consumer reference, as
+the main upstream reference for behavior and edge cases. Do not copy the
+TypeScript API or module layout mechanically; prefer the Rust architecture and
+quality bar defined in this PRD. Before implementation, read
+`tasks/prd-rust-providers/porting-reference.md` and inspect the Task 13.0
+upstream files listed there.
+
 <critical>
 - **ALWAYS READ** @AGENTS.md before start - **MANDATORY SKILLS** must be checked for your domain
 - **ALWAYS READ** the technical docs from this PRD before start (techspec.md)
+- **ALWAYS READ** `tasks/prd-rust-providers/porting-reference.md` and inspect the Task 13.0 upstream TypeScript files before implementation
 - **YOU CAN ONLY** finish when `cargo fmt && cargo clippy -D warnings && cargo test` pass
 - **IF YOU DON'T CHECK SKILLS** your task will be invalid
 </critical>
@@ -38,17 +50,17 @@ Implement the `arky-server` crate providing an HTTP server that exposes the agen
 
 ## Subtasks
 
-- [ ] 13.1 Set up `axum` server boilerplate with feature gate
-- [ ] 13.2 Implement `GET /health` and `GET /ready` endpoints
-- [ ] 13.3 Implement session routes: `GET /sessions`, `GET /sessions/:id`, `GET /sessions/:id/messages`
-- [ ] 13.4 Implement SSE endpoint: `GET /sessions/:id/events` for real-time event streaming
-- [ ] 13.5 Implement replay endpoint: `GET /sessions/:id/replay` for historical event retrieval
-- [ ] 13.6 Implement provider health exposure endpoints
-- [ ] 13.7 Implement error response formatting and request validation middleware
-- [ ] 13.8 Implement CORS configuration
-- [ ] 13.9 Integrate server with `Agent` instance (shared state via `Arc`)
-- [ ] 13.10 Write unit tests for route handlers with mock agent state
-- [ ] 13.11 Write integration tests for HTTP request/response round-trips
+- [x] 13.1 Set up `axum` server boilerplate with feature gate
+- [x] 13.2 Implement `GET /health` and `GET /ready` endpoints
+- [x] 13.3 Implement session routes: `GET /sessions`, `GET /sessions/:id`, `GET /sessions/:id/messages`
+- [x] 13.4 Implement SSE endpoint: `GET /sessions/:id/events` for real-time event streaming
+- [x] 13.5 Implement replay endpoint: `GET /sessions/:id/replay` for historical event retrieval
+- [x] 13.6 Implement provider health exposure endpoints
+- [x] 13.7 Implement error response formatting and request validation middleware
+- [x] 13.8 Implement CORS configuration
+- [x] 13.9 Integrate server with `Agent` instance (shared state via `Arc`)
+- [x] 13.10 Write unit tests for route handlers with mock agent state
+- [x] 13.11 Write integration tests for HTTP request/response round-trips
 
 ## Implementation Details
 
@@ -82,30 +94,30 @@ Implement the `arky-server` crate providing an HTTP server that exposes the agen
 
 ### Unit Tests (Required)
 
-- [ ] Health endpoint: returns 200 with correct body
-- [ ] Ready endpoint: returns 200 when agent is ready, 503 when not
-- [ ] Session list: returns sessions from mock store
-- [ ] Session detail: returns session snapshot for valid ID, 404 for invalid
-- [ ] Error formatting: errors map to correct HTTP status codes and JSON bodies
+- [x] Health endpoint: returns 200 with correct body
+- [x] Ready endpoint: returns 200 when agent is ready, 503 when not
+- [x] Session list: returns sessions from mock store
+- [x] Session detail: returns session snapshot for valid ID, 404 for invalid
+- [x] Error formatting: errors map to correct HTTP status codes and JSON bodies
 
 ### Integration Tests (Required)
 
-- [ ] Full HTTP round-trip: start server, make requests with `reqwest`, verify responses
-- [ ] SSE endpoint: connect to event stream, inject events through agent, verify SSE delivery
-- [ ] Replay endpoint: create session with events, request replay, verify event sequence
+- [x] Full HTTP round-trip: start server, make requests with `reqwest`, verify responses
+- [x] SSE endpoint: connect to event stream, inject events through agent, verify SSE delivery
+- [x] Replay endpoint: create session with events, request replay, verify event sequence
 
 ### Regression and Anti-Pattern Guards
 
-- [ ] SSE connections are properly cleaned up on client disconnect
-- [ ] No `unwrap()` in library code
-- [ ] Server shutdown is graceful (in-flight requests complete)
-- [ ] CORS headers are present on all responses
+- [x] SSE connections are properly cleaned up on client disconnect
+- [x] No `unwrap()` in library code
+- [x] Server shutdown is graceful (in-flight requests complete)
+- [x] CORS headers are present on all responses
 
 ### Verification Commands
 
-- [ ] `cargo fmt --check`
-- [ ] `cargo clippy -D warnings`
-- [ ] `cargo test -p arky-server --features server`
+- [x] `cargo fmt --check`
+- [x] `cargo clippy -D warnings`
+- [x] `cargo test -p arky-server --features server`
 
 ## Success Criteria
 

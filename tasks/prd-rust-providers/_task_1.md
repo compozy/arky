@@ -1,6 +1,6 @@
 ## markdown
 
-## status: pending
+## status: completed
 
 <task_context>
 <domain>infra/workspace</domain>
@@ -18,9 +18,20 @@ Bootstrap the Arky Cargo workspace at `~/dev/compozy/arky/` and implement the fo
 
 The workspace root `Cargo.toml` must define all shared dependencies via `[workspace.dependencies]`, enforce unified lint config, and declare all 15 crate members. The `arky-error` crate provides the `ClassifiedError` trait, shared error-code conventions, retryability classification, and helper structs for logging and API mapping.
 
+## Porting Context
+
+This task uses the shared workspace and error foundation in
+`../compozy-code/providers/core` and `../compozy-code/providers/runtime` as
+the main upstream reference for behavior and edge cases. Do not copy the
+TypeScript API or module layout mechanically; prefer the Rust architecture and
+quality bar defined in this PRD. Before implementation, read
+`tasks/prd-rust-providers/porting-reference.md` and inspect the Task 1.0
+upstream files listed there.
+
 <critical>
 - **ALWAYS READ** @AGENTS.md before start - **MANDATORY SKILLS** must be checked for your domain
 - **ALWAYS READ** the technical docs from this PRD before start (techspec.md, ADR-001, ADR-006, ADR-010)
+- **ALWAYS READ** `tasks/prd-rust-providers/porting-reference.md` and inspect the Task 1.0 upstream TypeScript files before implementation
 - **YOU CAN ONLY** finish when `cargo fmt && cargo clippy -D warnings && cargo test` pass
 - **IF YOU DON'T CHECK SKILLS** your task will be invalid
 </critical>
@@ -38,13 +49,13 @@ The workspace root `Cargo.toml` must define all shared dependencies via `[worksp
 
 ## Subtasks
 
-- [ ] 1.1 Create workspace directory structure with all 15 crate directories under `crates/`
-- [ ] 1.2 Write root `Cargo.toml` with `[workspace]` members, `[workspace.dependencies]`, and shared lint/profile config
-- [ ] 1.3 Create stub `Cargo.toml` and `src/lib.rs` for each of the 15 crates (minimal, compilable)
-- [ ] 1.4 Implement `ClassifiedError` trait in `arky-error/src/lib.rs` with all required methods and default implementations
-- [ ] 1.5 Add helper structs in `arky-error` for structured error logging and HTTP status mapping
-- [ ] 1.6 Write unit tests for `ClassifiedError` default implementations and helper structs
-- [ ] 1.7 Verify full workspace compiles: `cargo build`, `cargo fmt`, `cargo clippy -D warnings`, `cargo test`
+- [x] 1.1 Create workspace directory structure with all 15 crate directories under `crates/`
+- [x] 1.2 Write root `Cargo.toml` with `[workspace]` members, `[workspace.dependencies]`, and shared lint/profile config
+- [x] 1.3 Create stub `Cargo.toml` and `src/lib.rs` for each of the 15 crates (minimal, compilable)
+- [x] 1.4 Implement `ClassifiedError` trait in `arky-error/src/lib.rs` with all required methods and default implementations
+- [x] 1.5 Add helper structs in `arky-error` for structured error logging and HTTP status mapping
+- [x] 1.6 Write unit tests for `ClassifiedError` default implementations and helper structs
+- [x] 1.7 Verify full workspace compiles: `cargo build`, `cargo fmt`, `cargo clippy -D warnings`, `cargo test`
 
 ## Implementation Details
 
@@ -74,29 +85,29 @@ The workspace root `Cargo.toml` must define all shared dependencies via `[worksp
 
 ### Unit Tests (Required)
 
-- [ ] `ClassifiedError` default method behavior: `is_retryable()` returns `false`, `retry_after()` returns `None`, `http_status()` returns `500`, `correction_context()` returns `None`
-- [ ] Custom error enum implementing `ClassifiedError` with overridden methods
-- [ ] Helper struct construction and field access for logging and API mapping
-- [ ] Error display formatting via `thiserror`
+- [x] `ClassifiedError` default method behavior: `is_retryable()` returns `false`, `retry_after()` returns `None`, `http_status()` returns `500`, `correction_context()` returns `None`
+- [x] Custom error enum implementing `ClassifiedError` with overridden methods
+- [x] Helper struct construction and field access for logging and API mapping
+- [x] Error display formatting via `thiserror`
 
 ### Integration Tests (Required)
 
-- [ ] Full workspace `cargo build` succeeds with all 15 crates
-- [ ] `cargo clippy -D warnings` produces zero warnings across all crates
-- [ ] `cargo test` runs and passes for `arky-error`
+- [x] Full workspace `cargo build` succeeds with all 15 crates
+- [x] `cargo clippy -D warnings` produces zero warnings across all crates
+- [x] `cargo test` runs and passes for `arky-error`
 
 ### Regression and Anti-Pattern Guards
 
-- [ ] No `unwrap()` in library code (enforced by clippy config)
-- [ ] All public async traits are `Send + Sync`
-- [ ] `#[non_exhaustive]` on public enums where specified
+- [x] No `unwrap()` in library code (enforced by clippy config)
+- [x] All public async traits are `Send + Sync`
+- [x] `#[non_exhaustive]` on public enums where specified
 
 ### Verification Commands
 
-- [ ] `cargo fmt --check`
-- [ ] `cargo clippy -D warnings`
-- [ ] `cargo test -p arky-error`
-- [ ] `cargo build --workspace`
+- [x] `cargo fmt --check`
+- [x] `cargo clippy -D warnings`
+- [x] `cargo test -p arky-error`
+- [x] `cargo build --workspace`
 
 ## Success Criteria
 

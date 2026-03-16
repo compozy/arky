@@ -1,6 +1,6 @@
 ## markdown
 
-## status: pending
+## status: completed
 
 <task_context>
 <domain>infra/ci</domain>
@@ -16,9 +16,20 @@
 
 Set up CI/CD pipeline, add hardening measures (fixture corpus, benchmarks, dependency graph enforcement), and create developer documentation. This is the final task that ensures the SDK is production-ready with automated quality gates, performance baselines, and comprehensive documentation. Runnable examples are handled by Task 15.0 — this task focuses on CI infrastructure, regression fixtures, benchmarks, and docs.
 
+## Porting Context
+
+This task should use the upstream provider test suites, fixtures, examples, and
+package-level tooling in `../compozy-code/providers/core`, `runtime`,
+`claude-code`, and `codex` as the reference corpus for regression coverage and
+developer guidance. Treat them as reference material, not as a requirement to
+mirror TypeScript tooling or limitations mechanically. Before implementation,
+read `tasks/prd-rust-providers/porting-reference.md` and inspect the Task 16.0
+upstream files listed there.
+
 <critical>
 - **ALWAYS READ** @AGENTS.md before start - **MANDATORY SKILLS** must be checked for your domain
 - **ALWAYS READ** the technical docs from this PRD before start (techspec.md)
+- **ALWAYS READ** `tasks/prd-rust-providers/porting-reference.md` and inspect the Task 16.0 upstream TypeScript files before implementation
 - **YOU CAN ONLY** finish when `cargo fmt && cargo clippy -D warnings && cargo test` pass
 - **IF YOU DON'T CHECK SKILLS** your task will be invalid
 </critical>
@@ -35,18 +46,18 @@ Set up CI/CD pipeline, add hardening measures (fixture corpus, benchmarks, depen
 
 ## Subtasks
 
-- [ ] 16.1 Set up CI configuration (GitHub Actions or equivalent) with fmt, clippy, test, doc jobs
-- [ ] 16.2 Create Claude CLI fixture corpus (recorded CLI output for protocol regression tests)
-- [ ] 16.3 Create Codex JSON-RPC fixture corpus (recorded JSON-RPC exchanges)
-- [ ] 16.4 Implement crate dependency graph validation script (enforce acyclic leaf crate invariant)
-- [ ] 16.5 Add benchmarks for event throughput (events per second through stream processing)
-- [ ] 16.6 Add benchmarks for provider spawn latency
-- [ ] 16.7 Add benchmarks for session replay overhead
-- [ ] 16.8 Write architecture overview documentation (`docs/architecture.md`)
-- [ ] 16.9 Write getting-started guide (`docs/getting-started.md`)
-- [ ] 16.10 Audit all public types for documentation comments, add missing ones
-- [ ] 16.11 Set up `cargo doc --no-deps` in CI pipeline
-- [ ] 16.12 Verify examples compile in CI (`cargo build --examples` — examples from Task 15.0)
+- [x] 16.1 Set up CI configuration (GitHub Actions or equivalent) with fmt, clippy, test, doc jobs
+- [x] 16.2 Create Claude CLI fixture corpus (recorded CLI output for protocol regression tests)
+- [x] 16.3 Create Codex JSON-RPC fixture corpus (recorded JSON-RPC exchanges)
+- [x] 16.4 Implement crate dependency graph validation script (enforce acyclic leaf crate invariant)
+- [x] 16.5 Add benchmarks for event throughput (events per second through stream processing)
+- [x] 16.6 Add benchmarks for provider spawn latency
+- [x] 16.7 Add benchmarks for session replay overhead
+- [x] 16.8 Write architecture overview documentation (`docs/architecture.md`)
+- [x] 16.9 Write getting-started guide (`docs/getting-started.md`)
+- [x] 16.10 Audit all public types for documentation comments, add missing ones
+- [x] 16.11 Set up `cargo doc --no-deps` in CI pipeline
+- [x] 16.12 Verify examples compile in CI (`cargo build --examples` — examples from Task 15.0)
 
 ## Implementation Details
 
@@ -81,31 +92,31 @@ Set up CI/CD pipeline, add hardening measures (fixture corpus, benchmarks, depen
 
 ### Unit Tests (Required)
 
-- [ ] Fixture corpus: each fixture file parses without errors
-- [ ] Dependency graph script: detects intentionally introduced cycle, passes on clean graph
+- [x] Fixture corpus: each fixture file parses without errors
+- [x] Dependency graph script: detects intentionally introduced cycle, passes on clean graph
 
 ### Integration Tests (Required)
 
-- [ ] CI pipeline: full pipeline runs locally (simulated or dry-run)
-- [ ] Examples from Task 15.0 compile in CI (`cargo build --examples`)
-- [ ] Benchmarks: each benchmark runs without error (verified by `cargo bench --no-run`)
+- [x] CI pipeline: full pipeline runs locally (simulated or dry-run)
+- [x] Examples from Task 15.0 compile in CI (`cargo build --examples`)
+- [x] Benchmarks: each benchmark runs without error (verified by `cargo bench --no-run`)
 
 ### Regression and Anti-Pattern Guards
 
-- [ ] CI fails on any clippy warning
-- [ ] CI fails on any formatting diff
-- [ ] CI fails on test failures
-- [ ] Documentation generation succeeds without warnings
+- [x] CI fails on any clippy warning
+- [x] CI fails on any formatting diff
+- [x] CI fails on test failures
+- [x] Documentation generation succeeds without warnings
 
 ### Verification Commands
 
-- [ ] `cargo fmt --check`
-- [ ] `cargo clippy -D warnings`
-- [ ] `cargo test --workspace`
-- [ ] `cargo test --workspace --all-features`
-- [ ] `cargo doc --no-deps --workspace`
-- [ ] `cargo build --examples`
-- [ ] `cargo bench --no-run`
+- [x] `cargo fmt --check`
+- [x] `cargo clippy -D warnings`
+- [x] `cargo test --workspace`
+- [x] `cargo test --workspace --all-features`
+- [x] `cargo doc --no-deps --workspace`
+- [x] `cargo build --examples`
+- [x] `cargo bench --no-run`
 
 ## Success Criteria
 

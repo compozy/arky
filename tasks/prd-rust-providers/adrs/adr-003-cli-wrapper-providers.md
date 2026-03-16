@@ -8,6 +8,13 @@ Accepted
 
 2026-03-15
 
+## Porting Context
+
+This ADR uses the TypeScript provider stack in `../compozy-code/providers` as
+upstream reference material. Use `../porting-reference.md` to find the closest
+packages and files, but prefer the Rust decision recorded here when it
+intentionally improves on the upstream design.
+
 ## Context
 
 We need to decide how the Arky Rust SDK communicates with LLM providers. Our existing TypeScript providers wrap CLI tools (Claude Code CLI, Codex CLI) as subprocesses rather than calling LLM APIs directly. This gives us access to all the built-in features of those CLIs (MCP support, tool execution, hooks, permissions, session management).

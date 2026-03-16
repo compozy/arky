@@ -1,6 +1,6 @@
 ## markdown
 
-## status: pending
+## status: completed
 
 <task_context>
 <domain>engine/claude-code</domain>
@@ -18,9 +18,20 @@ Implement the `arky-claude-code` crate — the first concrete provider wrapping 
 
 This provider must NOT collapse all complexity into a single "read lines and map JSON" module. The tool FSM, nested tool tracking, and duplicate-text handling are core correctness requirements.
 
+## Porting Context
+
+This task uses the upstream Claude Code provider in
+`../compozy-code/providers/claude-code` as the main upstream reference for
+behavior and edge cases. Do not copy its API or module layout mechanically;
+prefer the Rust architecture and quality bar defined in this PRD. Before
+implementation, read `tasks/prd-rust-providers/porting-reference.md` and
+inspect the Task 10.0 source list there, especially the `services/`,
+`stream/`, `tools/`, `mcp/`, and `classifier/` files.
+
 <critical>
 - **ALWAYS READ** @AGENTS.md before start - **MANDATORY SKILLS** must be checked for your domain
 - **ALWAYS READ** the technical docs from this PRD before start (techspec.md, ADR-003, analysis_claude_code.md)
+- **ALWAYS READ** `tasks/prd-rust-providers/porting-reference.md` and inspect the Task 10.0 upstream TypeScript files before implementation
 - **YOU CAN ONLY** finish when `cargo fmt && cargo clippy -D warnings && cargo test` pass
 - **IF YOU DON'T CHECK SKILLS** your task will be invalid
 </critical>
@@ -42,19 +53,19 @@ This provider must NOT collapse all complexity into a single "read lines and map
 
 ## Subtasks
 
-- [ ] 10.1 Implement Claude CLI binary discovery and version validation
-- [ ] 10.2 Implement subprocess spawning with correct CLI flags (`--print`, `--output-format stream-json`, `--verbose`, etc.)
-- [ ] 10.3 Implement Claude CLI event protocol parser (stream-json line parsing)
-- [ ] 10.4 Implement event normalization: Claude CLI events -> `AgentEvent` variants
-- [ ] 10.5 Implement tool lifecycle FSM: track tool call states with valid transitions
-- [ ] 10.6 Implement nested tool-call tracking
-- [ ] 10.7 Implement text deduplication between streamed deltas and final assistant blocks
-- [ ] 10.8 Implement spawn-failure cooldown tracking
-- [ ] 10.9 Implement session identifier passthrough (`--session-id` flag reuse)
-- [ ] 10.10 Implement `ProviderDescriptor` and `ProviderCapabilities` for Claude Code
-- [ ] 10.11 Pass `ProviderContractTests` shared test suite
-- [ ] 10.12 Write unit tests for event parsing, tool FSM, deduplication, and cooldown
-- [ ] 10.13 Write integration tests spawning real `claude` binary (behind integration flag)
+- [x] 10.1 Implement Claude CLI binary discovery and version validation
+- [x] 10.2 Implement subprocess spawning with correct CLI flags (`--print`, `--output-format stream-json`, `--verbose`, etc.)
+- [x] 10.3 Implement Claude CLI event protocol parser (stream-json line parsing)
+- [x] 10.4 Implement event normalization: Claude CLI events -> `AgentEvent` variants
+- [x] 10.5 Implement tool lifecycle FSM: track tool call states with valid transitions
+- [x] 10.6 Implement nested tool-call tracking
+- [x] 10.7 Implement text deduplication between streamed deltas and final assistant blocks
+- [x] 10.8 Implement spawn-failure cooldown tracking
+- [x] 10.9 Implement session identifier passthrough (`--session-id` flag reuse)
+- [x] 10.10 Implement `ProviderDescriptor` and `ProviderCapabilities` for Claude Code
+- [x] 10.11 Pass `ProviderContractTests` shared test suite
+- [x] 10.12 Write unit tests for event parsing, tool FSM, deduplication, and cooldown
+- [x] 10.13 Write integration tests spawning real `claude` binary (behind integration flag)
 
 ## Implementation Details
 
@@ -95,32 +106,32 @@ This provider must NOT collapse all complexity into a single "read lines and map
 
 ### Unit Tests (Required)
 
-- [ ] Event parser: parse each Claude CLI event type from fixture JSON, verify `AgentEvent` mapping
-- [ ] Tool FSM: valid transitions (start -> update -> end), invalid transitions produce errors
-- [ ] Nested tools: parent tool receives child tool results correctly
-- [ ] Text deduplication: streamed text + final block produce clean output without duplicates
-- [ ] Cooldown: spawn failure triggers cooldown, subsequent spawn within cooldown is delayed
-- [ ] Session passthrough: session ID is correctly passed to `--session-id` flag
+- [x] Event parser: parse each Claude CLI event type from fixture JSON, verify `AgentEvent` mapping
+- [x] Tool FSM: valid transitions (start -> update -> end), invalid transitions produce errors
+- [x] Nested tools: parent tool receives child tool results correctly
+- [x] Text deduplication: streamed text + final block produce clean output without duplicates
+- [x] Cooldown: spawn failure triggers cooldown, subsequent spawn within cooldown is delayed
+- [x] Session passthrough: session ID is correctly passed to `--session-id` flag
 
 ### Integration Tests (Required)
 
-- [ ] Spawn real `claude` binary (behind `#[cfg(feature = "integration")]`), send prompt, receive events
-- [ ] Tool lifecycle end-to-end: trigger tool call, verify FSM transitions in event stream
-- [ ] Provider contract tests: pass `ProviderContractTests` from `arky-provider`
+- [x] Spawn real `claude` binary (behind `#[cfg(feature = "integration")]`), send prompt, receive events
+- [x] Tool lifecycle end-to-end: trigger tool call, verify FSM transitions in event stream
+- [x] Provider contract tests: pass `ProviderContractTests` from `arky-provider`
 
 ### Regression and Anti-Pattern Guards
 
-- [ ] Protocol corruption: malformed JSON lines produce `ProtocolViolation`, not panics
-- [ ] Process crash after first event: handled gracefully via stream `Result` items
-- [ ] No `unwrap()` in library code
-- [ ] Binary not found: produces `BinaryNotFound` error, not panic
+- [x] Protocol corruption: malformed JSON lines produce `ProtocolViolation`, not panics
+- [x] Process crash after first event: handled gracefully via stream `Result` items
+- [x] No `unwrap()` in library code
+- [x] Binary not found: produces `BinaryNotFound` error, not panic
 
 ### Verification Commands
 
-- [ ] `cargo fmt --check`
-- [ ] `cargo clippy -D warnings`
-- [ ] `cargo test -p arky-claude-code`
-- [ ] `cargo test -p arky-claude-code --features integration` (requires `claude` binary)
+- [x] `cargo fmt --check`
+- [x] `cargo clippy -D warnings`
+- [x] `cargo test -p arky-claude-code`
+- [x] `cargo test -p arky-claude-code --features integration` (requires `claude` binary)
 
 ## Success Criteria
 

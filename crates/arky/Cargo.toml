@@ -12,7 +12,7 @@ default = ["claude-code", "codex"]
 claude-code = ["dep:arky-claude-code"]
 codex = ["dep:arky-codex"]
 sqlite = ["arky-session/sqlite"]
-server = ["dep:arky-server"]
+server = ["dep:arky-server", "arky-server/server"]
 full = ["claude-code", "codex", "sqlite", "server"]
 
 [dependencies]
@@ -31,10 +31,81 @@ arky-tools-macros = { workspace = true }
 arky-claude-code = { workspace = true, optional = true }
 arky-codex = { workspace = true, optional = true }
 arky-server = { workspace = true, optional = true }
+thiserror.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
+criterion = { version = "0.8.2", features = ["async_tokio", "html_reports"] }
+futures.workspace = true
 pretty_assertions = { workspace = true }
-tokio = { workspace = true, features = ["test-util"] }
+reqwest = { workspace = true, features = ["json", "rustls-tls", "stream"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "test-util", "time"] }
+tokio-util.workspace = true
+
+[[example]]
+name = "01_minimal"
+path = "../../examples/01_minimal.rs"
+
+[[example]]
+name = "02_custom_provider"
+path = "../../examples/02_custom_provider.rs"
+
+[[example]]
+name = "03_system_prompt"
+path = "../../examples/03_system_prompt.rs"
+
+[[example]]
+name = "04_custom_tools"
+path = "../../examples/04_custom_tools.rs"
+
+[[example]]
+name = "05_tool_registry"
+path = "../../examples/05_tool_registry.rs"
+
+[[example]]
+name = "06_hooks"
+path = "../../examples/06_hooks.rs"
+
+[[example]]
+name = "07_event_streaming"
+path = "../../examples/07_event_streaming.rs"
+
+[[example]]
+name = "08_mcp_integration"
+path = "../../examples/08_mcp_integration.rs"
+
+[[example]]
+name = "09_sessions"
+path = "../../examples/09_sessions.rs"
+
+[[example]]
+name = "10_steering_followup"
+path = "../../examples/10_steering_followup.rs"
+
+[[example]]
+name = "11_server_exposure"
+path = "../../examples/11_server_exposure.rs"
+
+[[example]]
+name = "12_full_control"
+path = "../../examples/12_full_control.rs"
+
+[[bench]]
+name = "event_throughput"
+path = "../../benches/event_throughput.rs"
+harness = false
+
+[[bench]]
+name = "spawn_latency"
+path = "../../benches/spawn_latency.rs"
+harness = false
+
+[[bench]]
+name = "replay_overhead"
+path = "../../benches/replay_overhead.rs"
+harness = false
 
 [lints]
 workspace = true

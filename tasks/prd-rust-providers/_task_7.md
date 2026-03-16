@@ -1,6 +1,6 @@
 ## markdown
 
-## status: pending
+## status: completed
 
 <task_context>
 <domain>engine/session</domain>
@@ -16,9 +16,21 @@
 
 Implement the `arky-session` crate providing the `SessionStore` trait, session snapshots, replay log persistence, and both in-memory and SQLite backends. Session persistence must support **resume and replay**, not just transcript loading — message history alone is insufficient. Replay metadata, last turn outcome, provider/session identifiers, and persisted event checkpoints are part of the persistence contract.
 
+## Porting Context
+
+This task uses the session and replay behavior in
+`../compozy-code/providers/runtime`, with additional provider-specific session
+patterns in `../compozy-code/providers/claude-code` and
+`../compozy-code/providers/codex`, as the main upstream reference for behavior
+and edge cases. Do not copy the TypeScript API or module layout mechanically;
+prefer the Rust architecture and quality bar defined in this PRD. Before
+implementation, read `tasks/prd-rust-providers/porting-reference.md` and
+inspect the Task 7.0 upstream files listed there.
+
 <critical>
 - **ALWAYS READ** @AGENTS.md before start - **MANDATORY SKILLS** must be checked for your domain
 - **ALWAYS READ** the technical docs from this PRD before start (techspec.md, ADR-007)
+- **ALWAYS READ** `tasks/prd-rust-providers/porting-reference.md` and inspect the Task 7.0 upstream TypeScript files before implementation
 - **YOU CAN ONLY** finish when `cargo fmt && cargo clippy -D warnings && cargo test` pass
 - **IF YOU DON'T CHECK SKILLS** your task will be invalid
 </critical>
@@ -41,16 +53,16 @@ Implement the `arky-session` crate providing the `SessionStore` trait, session s
 
 ## Subtasks
 
-- [ ] 7.1 Define `SessionStore` trait with all required methods
-- [ ] 7.2 Define `SessionSnapshot`, `SessionMetadata`, `NewSession`, `SessionFilter` types
-- [ ] 7.3 Define `TurnCheckpoint` and `ReplayCursor` types
-- [ ] 7.4 Implement in-memory `SessionStore` backend with configurable replay persistence
-- [ ] 7.5 Implement SQLite `SessionStore` backend (feature-gated under `sqlite`)
-- [ ] 7.6 Configure SQLite with WAL mode and single-writer discipline
-- [ ] 7.7 Implement `SessionError` enum with `ClassifiedError` implementation
-- [ ] 7.8 Write unit tests for in-memory backend: create, load, append, checkpoint, list, delete
-- [ ] 7.9 Write integration tests for SQLite backend: full lifecycle with real database file
-- [ ] 7.10 Write replay tests: checkpoint synthesis and replay cursor behavior
+- [x] 7.1 Define `SessionStore` trait with all required methods
+- [x] 7.2 Define `SessionSnapshot`, `SessionMetadata`, `NewSession`, `SessionFilter` types
+- [x] 7.3 Define `TurnCheckpoint` and `ReplayCursor` types
+- [x] 7.4 Implement in-memory `SessionStore` backend with configurable replay persistence
+- [x] 7.5 Implement SQLite `SessionStore` backend (feature-gated under `sqlite`)
+- [x] 7.6 Configure SQLite with WAL mode and single-writer discipline
+- [x] 7.7 Implement `SessionError` enum with `ClassifiedError` implementation
+- [x] 7.8 Write unit tests for in-memory backend: create, load, append, checkpoint, list, delete
+- [x] 7.9 Write integration tests for SQLite backend: full lifecycle with real database file
+- [x] 7.10 Write replay tests: checkpoint synthesis and replay cursor behavior
 
 ## Implementation Details
 
@@ -84,35 +96,35 @@ Implement the `arky-session` crate providing the `SessionStore` trait, session s
 
 ### Unit Tests (Required)
 
-- [ ] In-memory: create session, load returns correct snapshot
-- [ ] In-memory: append_messages updates message list
-- [ ] In-memory: append_events stores persisted events
-- [ ] In-memory: save_turn_checkpoint and load returns latest checkpoint
-- [ ] In-memory: list with filter returns matching sessions
-- [ ] In-memory: delete removes session, subsequent load returns `NotFound`
-- [ ] Replay cursor: position tracking and advancement
-- [ ] `SessionError` classification: each variant returns correct error codes
+- [x] In-memory: create session, load returns correct snapshot
+- [x] In-memory: append_messages updates message list
+- [x] In-memory: append_events stores persisted events
+- [x] In-memory: save_turn_checkpoint and load returns latest checkpoint
+- [x] In-memory: list with filter returns matching sessions
+- [x] In-memory: delete removes session, subsequent load returns `NotFound`
+- [x] Replay cursor: position tracking and advancement
+- [x] `SessionError` classification: each variant returns correct error codes
 
 ### Integration Tests (Required)
 
-- [ ] SQLite: full lifecycle (create, append, checkpoint, load, list, delete) with real temp database
-- [ ] SQLite: WAL mode verification
-- [ ] SQLite: concurrent reads during write (single-writer discipline)
-- [ ] Resume flow: create session, add messages, save checkpoint, load and verify replay cursor
+- [x] SQLite: full lifecycle (create, append, checkpoint, load, list, delete) with real temp database
+- [x] SQLite: WAL mode verification
+- [x] SQLite: concurrent reads during write (single-writer discipline)
+- [x] Resume flow: create session, add messages, save checkpoint, load and verify replay cursor
 
 ### Regression and Anti-Pattern Guards
 
-- [ ] `SessionStore` trait is `Send + Sync`
-- [ ] No `unwrap()` in library code
-- [ ] SQLite operations handle busy/locked errors with bounded retry
-- [ ] `SessionMetadata` is NOT the input type for `create()` — `NewSession` is
+- [x] `SessionStore` trait is `Send + Sync`
+- [x] No `unwrap()` in library code
+- [x] SQLite operations handle busy/locked errors with bounded retry
+- [x] `SessionMetadata` is NOT the input type for `create()` — `NewSession` is
 
 ### Verification Commands
 
-- [ ] `cargo fmt --check`
-- [ ] `cargo clippy -D warnings`
-- [ ] `cargo test -p arky-session`
-- [ ] `cargo test -p arky-session --features sqlite`
+- [x] `cargo fmt --check`
+- [x] `cargo clippy -D warnings`
+- [x] `cargo test -p arky-session`
+- [x] `cargo test -p arky-session --features sqlite`
 
 ## Success Criteria
 

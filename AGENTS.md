@@ -28,9 +28,10 @@ Arky is a Rust SDK for building AI agents. Cargo workspace with 14 crates under 
 
 ### CRITICAL: Git Commands Restriction
 
-- **ABSOLUTELY FORBIDDEN**: **NEVER** run `git restore`, `git checkout`, `git reset`, `git clean`, `git rm`, or any other git commands that modify or discard working directory changes **WITHOUT EXPLICIT USER PERMISSION**.
+- **ABSOLUTELY FORBIDDEN**: **NEVER** run `git restore`, `git checkout`, `git reset`, `git clean`, `git rm`, `git push --force`, `git branch -D`, or any other git commands that modify or discard working directory changes **WITHOUT EXPLICIT USER PERMISSION**.
 - **DATA LOSS RISK**: These commands can **PERMANENTLY LOSE CODE CHANGES** and cannot be easily recovered.
 - **REQUIRED ACTION**: If you need to revert or discard changes, **YOU MUST ASK THE USER FIRST** and wait for explicit permission before executing any destructive git command.
+- **VIOLATION CONSEQUENCE**: Running destructive git commands without explicit permission will result in **IMMEDIATE TASK REJECTION** and potential **IRREVERSIBLE DATA LOSS**.
 
 ### Code Search and Discovery
 

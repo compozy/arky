@@ -1,6 +1,6 @@
 ## markdown
 
-## status: pending
+## status: completed
 
 <task_context>
 <domain>engine/core</domain>
@@ -16,9 +16,21 @@
 
 Implement the `arky-core` crate — the central orchestration layer providing the `Agent` struct, `AgentBuilder`, command queue, single-turn execution loop, steering/follow-up orchestration, session replay, and tool cleanup. This is the high-level API layer that users interact with most directly. It enforces the critical invariant that the agent must never execute overlapping turns for the same session.
 
+## Porting Context
+
+This task uses the orchestration behavior in
+`../compozy-code/providers/runtime`, with
+`.resources/pi/packages/coding-agent/` as a secondary API-shape reference, as
+the main upstream reference for behavior and edge cases. Do not copy the
+TypeScript API or module layout mechanically; prefer the Rust architecture and
+quality bar defined in this PRD. Before implementation, read
+`tasks/prd-rust-providers/porting-reference.md` and inspect the Task 12.0
+upstream files listed there.
+
 <critical>
 - **ALWAYS READ** @AGENTS.md before start - **MANDATORY SKILLS** must be checked for your domain
 - **ALWAYS READ** the technical docs from this PRD before start (techspec.md, ADR-002)
+- **ALWAYS READ** `tasks/prd-rust-providers/porting-reference.md` and inspect the Task 12.0 upstream TypeScript files before implementation
 - **YOU CAN ONLY** finish when `cargo fmt && cargo clippy -D warnings && cargo test` pass
 - **IF YOU DON'T CHECK SKILLS** your task will be invalid
 </critical>
@@ -42,21 +54,21 @@ Implement the `arky-core` crate — the central orchestration layer providing th
 
 ## Subtasks
 
-- [ ] 12.1 Implement `AgentBuilder` with provider, tools, hooks, session store, and config registration
-- [ ] 12.2 Implement `Agent` struct with all public methods
-- [ ] 12.3 Implement command queue for operation serialization (channel-based or actor-style)
-- [ ] 12.4 Implement single-turn enforcement: reject or queue overlapping turns
-- [ ] 12.5 Implement turn loop: request -> provider stream -> event processing -> tool execution -> state persistence
-- [ ] 12.6 Implement `steer()` for injecting system guidance mid-conversation
-- [ ] 12.7 Implement `follow_up()` for continuing after completed turns
-- [ ] 12.8 Implement `abort()` for cancelling active turns
-- [ ] 12.9 Implement session replay: load snapshot, restore state, resume from checkpoint
-- [ ] 12.10 Implement tool cleanup on stream completion (success, error, and cancellation paths)
-- [ ] 12.11 Implement `EventSubscription` with broadcast receiver
-- [ ] 12.12 Implement tracing span hierarchy for observability
-- [ ] 12.13 Implement `CoreError` enum with `ClassifiedError` implementation
-- [ ] 12.14 Write unit tests for command queue, turn enforcement, and event subscription
-- [ ] 12.15 Write integration tests for full turn loop with mock provider
+- [x] 12.1 Implement `AgentBuilder` with provider, tools, hooks, session store, and config registration
+- [x] 12.2 Implement `Agent` struct with all public methods
+- [x] 12.3 Implement command queue for operation serialization (channel-based or actor-style)
+- [x] 12.4 Implement single-turn enforcement: reject or queue overlapping turns
+- [x] 12.5 Implement turn loop: request -> provider stream -> event processing -> tool execution -> state persistence
+- [x] 12.6 Implement `steer()` for injecting system guidance mid-conversation
+- [x] 12.7 Implement `follow_up()` for continuing after completed turns
+- [x] 12.8 Implement `abort()` for cancelling active turns
+- [x] 12.9 Implement session replay: load snapshot, restore state, resume from checkpoint
+- [x] 12.10 Implement tool cleanup on stream completion (success, error, and cancellation paths)
+- [x] 12.11 Implement `EventSubscription` with broadcast receiver
+- [x] 12.12 Implement tracing span hierarchy for observability
+- [x] 12.13 Implement `CoreError` enum with `ClassifiedError` implementation
+- [x] 12.14 Write unit tests for command queue, turn enforcement, and event subscription
+- [x] 12.15 Write integration tests for full turn loop with mock provider
 
 ## Implementation Details
 
@@ -102,35 +114,35 @@ Implement the `arky-core` crate — the central orchestration layer providing th
 
 ### Unit Tests (Required)
 
-- [ ] Command queue: operations are serialized, concurrent submits are queued
-- [ ] Single-turn enforcement: second `prompt()` while first is active returns `BusySession`
-- [ ] `abort()`: cancels active turn, cleans up resources
-- [ ] Event subscription: subscriber receives all events in order
-- [ ] Tool cleanup: temporary tools are unregistered after stream completion
-- [ ] Tool cleanup on error: temporary tools are unregistered even when stream fails
-- [ ] `CoreError` classification: each variant returns correct error codes
+- [x] Command queue: operations are serialized, concurrent submits are queued
+- [x] Single-turn enforcement: second `prompt()` while first is active returns `BusySession`
+- [x] `abort()`: cancels active turn, cleans up resources
+- [x] Event subscription: subscriber receives all events in order
+- [x] Tool cleanup: temporary tools are unregistered after stream completion
+- [x] Tool cleanup on error: temporary tools are unregistered even when stream fails
+- [x] `CoreError` classification: each variant returns correct error codes
 
 ### Integration Tests (Required)
 
-- [ ] Full turn loop: mock provider -> agent receives events -> tool execution -> response assembly
-- [ ] Steering: inject guidance mid-conversation, verify it reaches provider
-- [ ] Follow-up: complete turn, follow up, verify conversation continues
-- [ ] Session replay: create session, add messages, save checkpoint, resume, verify state restoration
-- [ ] Concurrency: overlapping turns on same session are rejected per invariant
+- [x] Full turn loop: mock provider -> agent receives events -> tool execution -> response assembly
+- [x] Steering: inject guidance mid-conversation, verify it reaches provider
+- [x] Follow-up: complete turn, follow up, verify conversation continues
+- [x] Session replay: create session, add messages, save checkpoint, resume, verify state restoration
+- [x] Concurrency: overlapping turns on same session are rejected per invariant
 
 ### Regression and Anti-Pattern Guards
 
-- [ ] No overlapping turns allowed for same session (invariant 1)
-- [ ] Temporary tools always cleaned up (invariant 4)
-- [ ] Session resume restores enough state to continue (invariant 5)
-- [ ] No `unwrap()` in library code
-- [ ] Tracing spans are properly nested
+- [x] No overlapping turns allowed for same session (invariant 1)
+- [x] Temporary tools always cleaned up (invariant 4)
+- [x] Session resume restores enough state to continue (invariant 5)
+- [x] No `unwrap()` in library code
+- [x] Tracing spans are properly nested
 
 ### Verification Commands
 
-- [ ] `cargo fmt --check`
-- [ ] `cargo clippy -D warnings`
-- [ ] `cargo test -p arky-core`
+- [x] `cargo fmt --check`
+- [x] `cargo clippy -D warnings`
+- [x] `cargo test -p arky-core`
 
 ## Success Criteria
 

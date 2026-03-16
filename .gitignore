@@ -3,6 +3,11 @@
 **/*.rs.bk
 Cargo.lock
 .codex/CONTINUITY.md
+.tmp
+
+# Node (commitlint + husky)
+node_modules/
+pnpm-lock.yaml
 
 # IDE
 .idea/

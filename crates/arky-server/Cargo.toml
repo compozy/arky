@@ -7,19 +7,31 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+server = ["dep:axum", "dep:tower-http"]
+
 [dependencies]
 arky-error = { workspace = true }
 arky-core = { workspace = true }
 arky-protocol = { workspace = true }
-axum = { workspace = true }
+axum = { workspace = true, optional = true, features = ["http1", "json", "query", "tokio"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 tracing = { workspace = true }
+arky-session = { workspace = true }
+async-stream = { workspace = true }
+futures = { workspace = true }
+tower-http = { version = "0.6.8", features = ["cors"], optional = true }
 
 [dev-dependencies]
+arky-provider = { workspace = true }
+async-trait = { workspace = true }
 pretty_assertions = { workspace = true }
+reqwest = { workspace = true, features = ["stream", "rustls-tls", "json"] }
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
