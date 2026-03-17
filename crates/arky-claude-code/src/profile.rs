@@ -400,8 +400,7 @@ fn moonshot_env(
         selected_model.as_deref(),
     );
     if let Some(selected_model) = selected_model {
-        env.insert("ANTHROPIC_MODEL".to_owned(), selected_model.clone());
-        env.insert("CLAUDE_CODE_SUBAGENT_MODEL".to_owned(), selected_model);
+        env.insert("ANTHROPIC_MODEL".to_owned(), selected_model);
     }
     env
 }

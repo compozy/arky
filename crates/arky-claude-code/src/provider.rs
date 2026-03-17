@@ -1300,7 +1300,6 @@ mod tests {
     use crate::{
         BedrockProviderConfig,
         ClaudeCompatibleProviderConfig,
-        MoonshotProviderConfig,
         OllamaProviderConfig,
         profile::ClaudeProviderProfile,
     };
@@ -1509,37 +1508,6 @@ mod tests {
         );
 
         assert_eq!(provider.descriptor().id, ProviderId::new("bedrock"));
-    }
-
-    #[tokio::test]
-    async fn moonshot_profile_should_inject_subagent_model_env() {
-        let provider = ClaudeCodeProvider::with_profile_config(
-            ClaudeProviderProfile::Moonshot(MoonshotProviderConfig::new(
-                "moonshot-key",
-                "moonshot-v1",
-            )),
-            ClaudeCompatibleProviderConfig::default(),
-        );
-        let request = ProviderRequest::new(
-            SessionRef::new(None),
-            TurnContext::new(TurnId::new(), 1),
-            ModelRef::new("sonnet"),
-            vec![Message::user("hello")],
-        );
-
-        let config = provider
-            .build_process_config(&request)
-            .await
-            .expect("process config should build");
-
-        assert_eq!(
-            config
-                .process_config
-                .env
-                .get("CLAUDE_CODE_SUBAGENT_MODEL")
-                .map(String::as_str),
-            Some("moonshot-v1")
-        );
     }
 
     #[tokio::test]

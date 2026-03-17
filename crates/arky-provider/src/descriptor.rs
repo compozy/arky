@@ -237,26 +237,7 @@ pub fn validate_capabilities(
         ));
     }
 
-    if has_agent_options(request) {
-        warnings.push(CapabilityWarning::new(
-            "subagents",
-            "subagent configuration is present but provider-side validation has not been implemented yet",
-        ));
-    }
-
     warnings
-}
-
-fn has_agent_options(request: &ProviderRequest) -> bool {
-    for key in ["agents", "subagents"] {
-        let Some(value) = request.settings.extra.get(key) else {
-            continue;
-        };
-        if value.as_array().is_some_and(|entries| !entries.is_empty()) {
-            return true;
-        }
-    }
-    false
 }
 
 #[cfg(test)]
