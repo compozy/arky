@@ -180,6 +180,7 @@ pub use arky_tools::{
     ToolRegistry,
     build_canonical_tool_name,
     create_claude_code_tool_id_codec,
+    create_claude_compatible_tool_id_codec,
     create_codex_tool_id_codec,
     create_opencode_tool_id_codec,
     parse_canonical_tool_name,
@@ -201,8 +202,27 @@ pub use arky_usage::{
 pub use arky_claude_code as claude_code;
 #[cfg(feature = "claude-code")]
 pub use arky_claude_code::{
+    BedrockProvider,
+    BedrockProviderConfig,
+    CLAUDE_COMPATIBLE_PROVIDER_IDS,
     ClaudeCodeProvider,
     ClaudeCodeProviderConfig,
+    ClaudeCompatibleProviderConfig,
+    ClaudeCompatibleProviderKind,
+    MinimaxProvider,
+    MinimaxProviderConfig,
+    MoonshotProvider,
+    MoonshotProviderConfig,
+    OllamaProvider,
+    OllamaProviderConfig,
+    OpenRouterProvider,
+    OpenRouterProviderConfig,
+    VercelProvider,
+    VercelProviderConfig,
+    VertexProvider,
+    VertexProviderConfig,
+    ZaiProvider,
+    ZaiProviderConfig,
 };
 
 #[cfg(feature = "codex")]

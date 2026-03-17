@@ -87,6 +87,7 @@ pub use arky_tools::{
     StaticToolIdCodec,
     ToolIdCodec,
     create_claude_code_tool_id_codec,
+    create_claude_compatible_tool_id_codec,
     create_codex_tool_id_codec,
     create_opencode_tool_id_codec,
 };

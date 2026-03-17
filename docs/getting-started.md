@@ -58,6 +58,19 @@ let provider = ClaudeCodeProvider::with_config(ClaudeCodeProviderConfig {
 });
 ```
 
+Claude-compatible gateway and cloud wrappers are also available when you want a
+first-class provider identity with the same Claude CLI harness underneath:
+`BedrockProvider`, `ZaiProvider`, `OpenRouterProvider`, `VercelProvider`,
+`MoonshotProvider`, `MinimaxProvider`, `VertexProvider`, and `OllamaProvider`.
+
+```rust
+let provider = BedrockProvider::with_config(BedrockProviderConfig {
+    selected_model: Some("anthropic.claude-3-7-sonnet-v1:0".to_owned()),
+    region: Some("us-west-2".to_owned()),
+    ..BedrockProviderConfig::default()
+});
+```
+
 ### Codex
 
 Use `CodexProvider` when you want JSON-RPC app-server integration and

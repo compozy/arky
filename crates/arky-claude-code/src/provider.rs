@@ -26,18 +26,16 @@ use arky_provider::{
     ProcessConfig,
     ProcessManager,
     Provider,
-    ProviderCapabilities,
     ProviderDescriptor,
     ProviderError,
     ProviderEventStream,
-    ProviderFamily,
     ProviderRequest,
     StdioTransport,
     StdioTransportConfig,
 };
 use arky_tools::{
     ToolIdCodec,
-    create_claude_code_tool_id_codec,
+    create_claude_compatible_tool_id_codec,
 };
 use async_stream::try_stream;
 use serde_json::{
@@ -81,6 +79,7 @@ use crate::{
         ClaudeNormalizedEvent,
         is_claude_truncation_error,
     },
+    profile::ClaudeProviderProfile,
     session::SessionManager,
     tool_fsm::{
         ToolLifecycleState,
@@ -93,6 +92,7 @@ use crate::{
 pub struct ClaudeCodeProvider {
     descriptor: ProviderDescriptor,
     config: ClaudeCodeProviderConfig,
+    profile: ClaudeProviderProfile,
     sessions: SessionManager,
     cooldown: SpawnFailureTracker,
     codec: Arc<dyn ToolIdCodec>,
@@ -110,21 +110,21 @@ impl ClaudeCodeProvider {
     /// Creates a provider with an explicit runtime configuration.
     #[must_use]
     pub fn with_config(config: ClaudeCodeProviderConfig) -> Self {
+        Self::with_profile_config(ClaudeProviderProfile::ClaudeCode, config)
+    }
+
+    pub(crate) fn with_profile_config(
+        profile: ClaudeProviderProfile,
+        config: ClaudeCodeProviderConfig,
+    ) -> Self {
+        let descriptor = profile.descriptor();
         Self {
-            descriptor: ProviderDescriptor::new(
-                ProviderId::new("claude-code"),
-                ProviderFamily::ClaudeCode,
-                ProviderCapabilities::new()
-                    .with_streaming(true)
-                    .with_generate(true)
-                    .with_tool_calls(true)
-                    .with_mcp_passthrough(true)
-                    .with_session_resume(true),
-            ),
+            descriptor: descriptor.clone(),
             cooldown: SpawnFailureTracker::new(config.spawn_failure_policy),
             config,
+            profile,
             sessions: SessionManager::new(),
-            codec: Arc::new(create_claude_code_tool_id_codec()),
+            codec: Arc::new(create_claude_compatible_tool_id_codec(descriptor.id)),
             classifier: ClaudeErrorClassifier::new(),
             validated_version: Arc::new(tokio::sync::Mutex::new(None)),
         }
@@ -179,7 +179,7 @@ impl ClaudeCodeProvider {
         if let Some(cwd) = &self.config.cwd {
             config = config.with_cwd(cwd.clone());
         }
-        for (key, value) in merged_env_layers(None, &self.config.env) {
+        for (key, value) in merged_env_layers(&[&self.config.env]) {
             config = config.with_env(key.clone(), value.clone());
         }
         config
@@ -203,11 +203,7 @@ impl ClaudeCodeProvider {
         };
         let args = self.config.cli_args_with_input_format(
             (input_format == ClaudeInputFormat::Text).then_some(prompt),
-            request
-                .model
-                .provider_model_id
-                .clone()
-                .unwrap_or_else(|| request.model.model_id.clone()),
+            self.profile.runtime_model(request),
             session_id.as_deref(),
             input_format,
         )?;
@@ -219,7 +215,10 @@ impl ClaudeCodeProvider {
             config = config.with_cwd(cwd.clone());
         }
         let request_env = request_env_overrides(&request.settings.extra);
-        for (key, value) in merged_env_layers(Some(&request_env), &self.config.env) {
+        let profile_env = self.profile.env_overrides(request, &request_env);
+        for (key, value) in
+            merged_env_layers(&[&profile_env, &self.config.env, &request_env])
+        {
             config = config.with_env(key.clone(), value.clone());
         }
         Ok(ClaudeProcessPlan {
@@ -581,15 +580,11 @@ fn request_env_overrides(extra: &BTreeMap<String, Value>) -> BTreeMap<String, St
         .unwrap_or_default()
 }
 
-fn merged_env_layers(
-    user_env: Option<&BTreeMap<String, String>>,
-    provider_env: &BTreeMap<String, String>,
-) -> BTreeMap<String, String> {
+fn merged_env_layers(layers: &[&BTreeMap<String, String>]) -> BTreeMap<String, String> {
     let mut merged = std::env::vars().collect::<BTreeMap<_, _>>();
-    if let Some(user_env) = user_env {
-        merged.extend(user_env.clone());
+    for layer in layers {
+        merged.extend((*layer).clone());
     }
-    merged.extend(provider_env.clone());
     merged
 }
 
@@ -1302,14 +1297,25 @@ mod tests {
         ClaudeCodeProviderConfig,
         merged_env_layers,
     };
+    use crate::{
+        BedrockProviderConfig,
+        ClaudeCompatibleProviderConfig,
+        MoonshotProviderConfig,
+        OllamaProviderConfig,
+        profile::ClaudeProviderProfile,
+    };
     use arky_protocol::{
         Message,
         ModelRef,
+        ProviderId,
         SessionRef,
         TurnContext,
         TurnId,
     };
-    use arky_provider::ProviderRequest;
+    use arky_provider::{
+        Provider,
+        ProviderRequest,
+    };
 
     #[tokio::test]
     async fn provider_should_pass_session_id_to_cli_arguments() {
@@ -1338,21 +1344,24 @@ mod tests {
     }
 
     #[test]
-    fn merged_env_layers_should_prefer_user_then_provider_overrides() {
-        let user_env = BTreeMap::from([("SHARED_KEY".to_owned(), "user".to_owned())]);
-        let provider_env = BTreeMap::from([
-            ("SHARED_KEY".to_owned(), "provider".to_owned()),
-            ("PROVIDER_ONLY".to_owned(), "value".to_owned()),
+    fn merged_env_layers_should_prefer_later_overrides() {
+        let request_env =
+            BTreeMap::from([("SHARED_KEY".to_owned(), "request".to_owned())]);
+        let provider_env =
+            BTreeMap::from([("SHARED_KEY".to_owned(), "provider".to_owned())]);
+        let profile_env = BTreeMap::from([
+            ("SHARED_KEY".to_owned(), "profile".to_owned()),
+            ("PROFILE_ONLY".to_owned(), "value".to_owned()),
         ]);
 
-        let merged = merged_env_layers(Some(&user_env), &provider_env);
+        let merged = merged_env_layers(&[&request_env, &provider_env, &profile_env]);
 
         assert_eq!(
             merged.get("SHARED_KEY").map(String::as_str),
-            Some("provider")
+            Some("profile")
         );
         assert_eq!(
-            merged.get("PROVIDER_ONLY").map(String::as_str),
+            merged.get("PROFILE_ONLY").map(String::as_str),
             Some("value")
         );
     }
@@ -1396,6 +1405,262 @@ mod tests {
                 .get("FROM_PROVIDER")
                 .map(String::as_str),
             Some("provider")
+        );
+    }
+
+    #[tokio::test]
+    async fn bedrock_profile_should_keep_runtime_model_separate_from_selected_model() {
+        let provider = ClaudeCodeProvider::with_profile_config(
+            ClaudeProviderProfile::Bedrock(BedrockProviderConfig {
+                base: ClaudeCompatibleProviderConfig::default(),
+                selected_model: Some("anthropic.claude-3-7-sonnet-v1:0".to_owned()),
+                region: Some("us-west-2".to_owned()),
+            }),
+            ClaudeCompatibleProviderConfig::default(),
+        );
+        let request = ProviderRequest::new(
+            SessionRef::new(None),
+            TurnContext::new(TurnId::new(), 1),
+            ModelRef::new("sonnet")
+                .with_provider_model_id("anthropic.claude-3-5-haiku-v1:0"),
+            vec![Message::user("hello")],
+        );
+
+        let config = provider
+            .build_process_config(&request)
+            .await
+            .expect("process config should build");
+
+        assert_eq!(
+            config
+                .process_config
+                .args
+                .windows(2)
+                .any(|window| window == ["--model".to_owned(), "sonnet".to_owned()]),
+            true
+        );
+        assert_eq!(
+            config
+                .process_config
+                .env
+                .get("ANTHROPIC_MODEL")
+                .map(String::as_str),
+            Some("anthropic.claude-3-5-haiku-v1:0")
+        );
+        assert_eq!(
+            config
+                .process_config
+                .env
+                .get("AWS_REGION")
+                .map(String::as_str),
+            Some("us-west-2")
+        );
+    }
+
+    #[tokio::test]
+    async fn bedrock_profile_should_use_request_model_for_selected_model_when_unmapped() {
+        let provider = ClaudeCodeProvider::with_profile_config(
+            ClaudeProviderProfile::Bedrock(BedrockProviderConfig {
+                base: ClaudeCompatibleProviderConfig::default(),
+                selected_model: None,
+                region: Some("us-west-2".to_owned()),
+            }),
+            ClaudeCompatibleProviderConfig::default(),
+        );
+        let request = ProviderRequest::new(
+            SessionRef::new(None),
+            TurnContext::new(TurnId::new(), 1),
+            ModelRef::new("sonnet"),
+            vec![Message::user("hello")],
+        );
+
+        let config = provider
+            .build_process_config(&request)
+            .await
+            .expect("process config should build");
+
+        assert_eq!(
+            config
+                .process_config
+                .env
+                .get("ANTHROPIC_MODEL")
+                .map(String::as_str),
+            Some("sonnet")
+        );
+        assert_eq!(
+            config
+                .process_config
+                .env
+                .get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+                .map(String::as_str),
+            Some("sonnet")
+        );
+    }
+
+    #[test]
+    fn profiled_provider_should_use_actual_provider_id_in_descriptor() {
+        let provider = ClaudeCodeProvider::with_profile_config(
+            ClaudeProviderProfile::Bedrock(BedrockProviderConfig {
+                base: ClaudeCompatibleProviderConfig::default(),
+                selected_model: None,
+                region: None,
+            }),
+            ClaudeCompatibleProviderConfig::default(),
+        );
+
+        assert_eq!(provider.descriptor().id, ProviderId::new("bedrock"));
+    }
+
+    #[tokio::test]
+    async fn moonshot_profile_should_inject_subagent_model_env() {
+        let provider = ClaudeCodeProvider::with_profile_config(
+            ClaudeProviderProfile::Moonshot(MoonshotProviderConfig::new(
+                "moonshot-key",
+                "moonshot-v1",
+            )),
+            ClaudeCompatibleProviderConfig::default(),
+        );
+        let request = ProviderRequest::new(
+            SessionRef::new(None),
+            TurnContext::new(TurnId::new(), 1),
+            ModelRef::new("sonnet"),
+            vec![Message::user("hello")],
+        );
+
+        let config = provider
+            .build_process_config(&request)
+            .await
+            .expect("process config should build");
+
+        assert_eq!(
+            config
+                .process_config
+                .env
+                .get("CLAUDE_CODE_SUBAGENT_MODEL")
+                .map(String::as_str),
+            Some("moonshot-v1")
+        );
+    }
+
+    #[tokio::test]
+    async fn ollama_profile_should_use_request_model_over_wrapper_default() {
+        let provider = ClaudeCodeProvider::with_profile_config(
+            ClaudeProviderProfile::Ollama(OllamaProviderConfig {
+                base: ClaudeCompatibleProviderConfig::default(),
+                base_url: Some("http://localhost:11434".to_owned()),
+                selected_model: "llama3".to_owned(),
+            }),
+            ClaudeCompatibleProviderConfig::default(),
+        );
+        let request = ProviderRequest::new(
+            SessionRef::new(None),
+            TurnContext::new(TurnId::new(), 1),
+            ModelRef::new("qwen2.5"),
+            vec![Message::user("hello")],
+        );
+
+        let config = provider
+            .build_process_config(&request)
+            .await
+            .expect("process config should build");
+
+        assert_eq!(
+            config
+                .process_config
+                .env
+                .get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+                .map(String::as_str),
+            Some("qwen2.5")
+        );
+    }
+
+    #[tokio::test]
+    async fn ollama_profile_should_allow_base_env_to_override_profile_settings() {
+        let provider = ClaudeCodeProvider::with_profile_config(
+            ClaudeProviderProfile::Ollama(OllamaProviderConfig {
+                base: ClaudeCompatibleProviderConfig::default(),
+                base_url: Some("http://localhost:11434".to_owned()),
+                selected_model: "llama3".to_owned(),
+            }),
+            ClaudeCompatibleProviderConfig {
+                env: BTreeMap::from([(
+                    "ANTHROPIC_BASE_URL".to_owned(),
+                    "http://override-me".to_owned(),
+                )]),
+                ..ClaudeCompatibleProviderConfig::default()
+            },
+        );
+        let request = ProviderRequest::new(
+            SessionRef::new(None),
+            TurnContext::new(TurnId::new(), 1),
+            ModelRef::new("sonnet"),
+            vec![Message::user("hello")],
+        );
+
+        let config = provider
+            .build_process_config(&request)
+            .await
+            .expect("process config should build");
+
+        assert_eq!(
+            config
+                .process_config
+                .env
+                .get("ANTHROPIC_BASE_URL")
+                .map(String::as_str),
+            Some("http://override-me")
+        );
+        assert_eq!(
+            config
+                .process_config
+                .env
+                .get("ANTHROPIC_AUTH_TOKEN")
+                .map(String::as_str),
+            Some("ollama")
+        );
+    }
+
+    #[tokio::test]
+    async fn request_env_should_override_profile_and_base_env() {
+        let provider = ClaudeCodeProvider::with_profile_config(
+            ClaudeProviderProfile::Ollama(OllamaProviderConfig {
+                base: ClaudeCompatibleProviderConfig::default(),
+                base_url: Some("http://localhost:11434".to_owned()),
+                selected_model: "llama3".to_owned(),
+            }),
+            ClaudeCompatibleProviderConfig {
+                env: BTreeMap::from([(
+                    "ANTHROPIC_BASE_URL".to_owned(),
+                    "http://from-base".to_owned(),
+                )]),
+                ..ClaudeCompatibleProviderConfig::default()
+            },
+        );
+        let mut request = ProviderRequest::new(
+            SessionRef::new(None),
+            TurnContext::new(TurnId::new(), 1),
+            ModelRef::new("llama3"),
+            vec![Message::user("hello")],
+        );
+        request.settings.extra.insert(
+            "env".to_owned(),
+            json!({
+                "ANTHROPIC_BASE_URL": "http://from-request"
+            }),
+        );
+
+        let config = provider
+            .build_process_config(&request)
+            .await
+            .expect("process config should build");
+
+        assert_eq!(
+            config
+                .process_config
+                .env
+                .get("ANTHROPIC_BASE_URL")
+                .map(String::as_str),
+            Some("http://from-request")
         );
     }
 }

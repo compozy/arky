@@ -12,6 +12,7 @@ mod dedup;
 mod generate;
 mod nested;
 mod parser;
+mod profile;
 mod provider;
 mod session;
 mod tool_bridge;
@@ -65,6 +66,27 @@ pub use crate::{
         ClaudeEventSource,
         ClaudeNormalizedEvent,
         is_claude_truncation_error,
+    },
+    profile::{
+        BedrockProvider,
+        BedrockProviderConfig,
+        CLAUDE_COMPATIBLE_PROVIDER_IDS,
+        ClaudeCompatibleProviderConfig,
+        ClaudeCompatibleProviderKind,
+        MinimaxProvider,
+        MinimaxProviderConfig,
+        MoonshotProvider,
+        MoonshotProviderConfig,
+        OllamaProvider,
+        OllamaProviderConfig,
+        OpenRouterProvider,
+        OpenRouterProviderConfig,
+        VercelProvider,
+        VercelProviderConfig,
+        VertexProvider,
+        VertexProviderConfig,
+        ZaiProvider,
+        ZaiProviderConfig,
     },
     provider::ClaudeCodeProvider,
     session::SessionManager,

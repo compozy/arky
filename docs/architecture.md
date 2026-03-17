@@ -62,6 +62,9 @@ different speeds and should not force cycles through a monolith.
 - Reads Claude CLI `stream-json` lines from stdout.
 - Tracks nested tool invocations and assistant snapshot reconciliation.
 - Converts malformed lines or crashes into structured protocol/process errors.
+- Hosts first-class Claude-compatible wrappers such as `bedrock`, `zai`,
+  `openrouter`, `vercel`, `moonshot`, `minimax`, `vertex`, and `ollama`
+  without forking the parser or subprocess runtime.
 
 ### Codex
 

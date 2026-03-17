@@ -120,7 +120,15 @@ impl ToolIdCodec for StaticToolIdCodec {
 /// Creates the Claude Code tool-name codec.
 #[must_use]
 pub fn create_claude_code_tool_id_codec() -> StaticToolIdCodec {
-    StaticToolIdCodec::new(ProviderId::new("claude-code"), "mcp__compozy__")
+    create_claude_compatible_tool_id_codec(ProviderId::new("claude-code"))
+}
+
+/// Creates a Claude-compatible tool-name codec for one concrete provider ID.
+#[must_use]
+pub const fn create_claude_compatible_tool_id_codec(
+    provider_id: ProviderId,
+) -> StaticToolIdCodec {
+    StaticToolIdCodec::new(provider_id, "mcp__compozy__")
 }
 
 /// Creates the Codex tool-name codec.
