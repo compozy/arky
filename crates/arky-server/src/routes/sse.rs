@@ -3,7 +3,7 @@
 use axum::response::sse::Event;
 use serde_json::Value;
 
-use arky_protocol::AgentEvent;
+use arky_types::AgentEvent;
 
 use crate::routes::sse_event_name;
 

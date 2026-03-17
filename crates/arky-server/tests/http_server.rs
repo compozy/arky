@@ -3,13 +3,6 @@
 
 use std::sync::Arc;
 
-use arky_core::Agent;
-use arky_protocol::{
-    AgentEvent,
-    EventMetadata,
-    Message,
-    ProviderId,
-};
 use arky_provider::{
     Provider,
     ProviderCapabilities,
@@ -19,13 +12,20 @@ use arky_provider::{
     ProviderFamily,
     ProviderRequest,
 };
+use arky_runtime::Agent;
 use arky_server::{
     ModelCard,
     ProviderHealthSnapshot,
     ServerState,
     serve,
 };
-use arky_session::InMemorySessionStore;
+use arky_storage::InMemorySessionStore;
+use arky_types::{
+    AgentEvent,
+    EventMetadata,
+    Message,
+    ProviderId,
+};
 use async_trait::async_trait;
 use futures::stream;
 use pretty_assertions::assert_eq;
@@ -75,12 +75,12 @@ impl Provider for EchoProvider {
             .iter()
             .rev()
             .find_map(|message| {
-                if message.role != arky_protocol::Role::User {
+                if message.role != arky_types::Role::User {
                     return None;
                 }
 
                 message.content.iter().find_map(|block| match block {
-                    arky_protocol::ContentBlock::Text { text } => Some(text.clone()),
+                    arky_types::ContentBlock::Text { text } => Some(text.clone()),
                     _ => None,
                 })
             })
@@ -281,7 +281,7 @@ async fn http_round_trip_should_expose_health_sessions_and_cors() {
         .get(format!(
             "{}/sessions/{}",
             handle.base_url(),
-            arky_protocol::SessionId::new()
+            arky_types::SessionId::new()
         ))
         .header("origin", "https://example.com")
         .send()

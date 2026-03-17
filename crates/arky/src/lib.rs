@@ -54,14 +54,8 @@ pub use arky_config::{
     WorkspaceConfig,
     WorkspaceConfigBuilder,
 };
+pub use arky_control as control;
 pub use arky_core as core;
-pub use arky_core::{
-    Agent,
-    AgentBuilder,
-    AgentEventStream,
-    CoreError,
-    EventSubscription,
-};
 pub use arky_error::{
     ClassifiedError,
     ErrorLogEntry,
@@ -84,6 +78,7 @@ pub use arky_hooks::{
     ToolResultOverride,
     Verdict,
 };
+pub use arky_integrations as integrations;
 pub use arky_mcp as mcp;
 pub use arky_mcp::{
     ConnectionState,
@@ -105,35 +100,6 @@ pub use arky_mcp::{
     McpToolBridgeBuilder,
 };
 pub use arky_protocol as protocol;
-pub use arky_protocol::{
-    AgentEvent,
-    AgentResponse,
-    ContentBlock,
-    EventMetadata,
-    GenerateResponse,
-    Message,
-    MessageBuilder,
-    MessageMetadata,
-    ModelRef,
-    PersistedEvent,
-    ProviderId,
-    ProviderRequest,
-    ProviderSettings,
-    ReplayCursor,
-    Role,
-    SessionId,
-    SessionRef,
-    StreamDelta,
-    ToolCall,
-    ToolContent,
-    ToolContext,
-    ToolDefinition,
-    ToolResult,
-    TurnCheckpoint,
-    TurnContext,
-    TurnId,
-    Usage,
-};
 pub use arky_provider as provider;
 pub use arky_provider::{
     ManagedProcess,
@@ -155,8 +121,17 @@ pub use arky_provider::{
     StdioTransportConfig,
     generate_response_from_stream,
 };
+pub use arky_runtime as runtime;
+pub use arky_runtime::{
+    Agent,
+    AgentBuilder,
+    AgentEventStream,
+    CoreError,
+    EventSubscription,
+};
 pub use arky_session as session;
-pub use arky_session::{
+pub use arky_storage as storage;
+pub use arky_storage::{
     InMemorySessionStore,
     InMemorySessionStoreConfig,
     NewSession,
@@ -189,6 +164,36 @@ pub use arky_tools::{
 };
 pub use arky_tools_macros as macros;
 pub use arky_tools_macros::tool;
+pub use arky_types as types;
+pub use arky_types::{
+    AgentEvent,
+    AgentResponse,
+    ContentBlock,
+    EventMetadata,
+    GenerateResponse,
+    Message,
+    MessageBuilder,
+    MessageMetadata,
+    ModelRef,
+    PersistedEvent,
+    ProviderId,
+    ProviderRequest,
+    ProviderSettings,
+    ReplayCursor,
+    Role,
+    SessionId,
+    SessionRef,
+    StreamDelta,
+    ToolCall,
+    ToolContent,
+    ToolContext,
+    ToolDefinition,
+    ToolResult,
+    TurnCheckpoint,
+    TurnContext,
+    TurnId,
+    Usage,
+};
 pub use arky_usage as usage;
 pub use arky_usage::{
     ModelCost,
@@ -234,7 +239,7 @@ pub use arky_codex::{
 };
 
 #[cfg(feature = "sqlite")]
-pub use arky_session::{
+pub use arky_storage::{
     SqliteSessionStore,
     SqliteSessionStoreConfig,
 };

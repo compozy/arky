@@ -1,6 +1,6 @@
 //! Route handlers for the runtime server.
 
-use arky_protocol::AgentEvent;
+use arky_types::AgentEvent;
 
 pub mod chat;
 pub mod events;

@@ -1,0 +1,18 @@
+[package]
+name = "arky-storage"
+description = "Execution persistence substrate for the Arky AI agent SDK"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+sqlite = ["arky-session/sqlite"]
+
+[dependencies]
+arky-session = { workspace = true }
+
+[lints]
+workspace = true

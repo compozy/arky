@@ -55,9 +55,15 @@ pub use crate::{
         SessionCompatibility,
     },
 };
+#[cfg(feature = "server")]
+pub use arky_control::{
+    RuntimeHandle,
+    SessionStoreAdapter,
+    SessionStoreHandle,
+};
 
 #[cfg(feature = "server")]
-pub use arky_session::SessionStore;
+pub use arky_storage::SessionStore;
 
 #[cfg(feature = "server")]
 use crate::{
@@ -195,9 +201,19 @@ fn socket_addr_host(addr: SocketAddr) -> String {
 }
 
 #[cfg(feature = "server")]
-impl From<(Arc<arky_core::Agent>, Arc<dyn arky_session::SessionStore>)> for ServerState {
-    fn from(value: (Arc<arky_core::Agent>, Arc<dyn arky_session::SessionStore>)) -> Self {
-        Self::new(value.0, value.1)
+impl
+    From<(
+        Arc<arky_runtime::Agent>,
+        Arc<dyn arky_storage::SessionStore>,
+    )> for ServerState
+{
+    fn from(
+        value: (
+            Arc<arky_runtime::Agent>,
+            Arc<dyn arky_storage::SessionStore>,
+        ),
+    ) -> Self {
+        Self::new(value.0, Arc::new(SessionStoreAdapter::new(value.1)))
     }
 }
 
@@ -207,7 +223,6 @@ mod test_support {
     use async_trait::async_trait;
     use futures::stream;
 
-    use arky_protocol::ProviderId;
     use arky_provider::{
         Provider,
         ProviderCapabilities,
@@ -217,6 +232,7 @@ mod test_support {
         ProviderFamily,
         ProviderRequest,
     };
+    use arky_types::ProviderId;
 
     pub struct StaticProvider {
         descriptor: ProviderDescriptor,

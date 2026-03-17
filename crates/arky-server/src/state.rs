@@ -6,12 +6,15 @@ use std::{
     time::Duration,
 };
 
+use arky_control::{
+    RuntimeHandle,
+    SessionStoreHandle,
+};
 use arky_error::ClassifiedError;
-use arky_protocol::{
+use arky_types::{
     ProviderId,
     SessionId,
 };
-use arky_session::SessionStore;
 use serde::{
     Deserialize,
     Serialize,
@@ -24,8 +27,8 @@ use tokio::sync::{
 /// Top-level application state shared by all handlers.
 #[derive(Clone)]
 pub struct ServerState {
-    agent: Arc<arky_core::Agent>,
-    session_store: Arc<dyn SessionStore>,
+    runtime: Arc<dyn RuntimeHandle>,
+    session_store: Arc<dyn SessionStoreHandle>,
     health: RuntimeHealthRegistry,
     auth_token: Option<String>,
     models: Arc<RwLock<Vec<ModelCard>>>,
@@ -34,14 +37,15 @@ pub struct ServerState {
 }
 
 impl ServerState {
-    /// Creates server state from a shared agent and session store.
+    /// Creates server state from a shared runtime handle and session store.
     #[must_use]
-    pub fn new(
-        agent: Arc<arky_core::Agent>,
-        session_store: Arc<dyn SessionStore>,
-    ) -> Self {
+    pub fn new<R, S>(runtime: Arc<R>, session_store: Arc<S>) -> Self
+    where
+        R: RuntimeHandle + 'static,
+        S: SessionStoreHandle + 'static,
+    {
         Self {
-            agent,
+            runtime,
             session_store,
             health: RuntimeHealthRegistry::default(),
             auth_token: None,
@@ -51,15 +55,15 @@ impl ServerState {
         }
     }
 
-    /// Returns the shared agent instance.
+    /// Returns the shared runtime handle.
     #[must_use]
-    pub fn agent(&self) -> Arc<arky_core::Agent> {
-        Arc::clone(&self.agent)
+    pub fn runtime(&self) -> Arc<dyn RuntimeHandle> {
+        Arc::clone(&self.runtime)
     }
 
     /// Returns the shared session store.
     #[must_use]
-    pub fn session_store(&self) -> Arc<dyn SessionStore> {
+    pub fn session_store(&self) -> Arc<dyn SessionStoreHandle> {
         Arc::clone(&self.session_store)
     }
 

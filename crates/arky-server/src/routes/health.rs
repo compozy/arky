@@ -99,9 +99,9 @@ pub async fn get_provider_health(
 mod tests {
     use std::sync::Arc;
 
-    use arky_core::Agent;
-    use arky_protocol::ProviderId;
-    use arky_session::InMemorySessionStore;
+    use arky_runtime::Agent;
+    use arky_storage::InMemorySessionStore;
+    use arky_types::ProviderId;
     use axum::{
         Json,
         extract::{

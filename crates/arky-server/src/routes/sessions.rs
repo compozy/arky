@@ -2,14 +2,14 @@
 
 use std::collections::BTreeMap;
 
-use arky_protocol::{
-    Message,
-    SessionId,
-};
-use arky_session::{
+use arky_storage::{
     SessionFilter,
     SessionMetadata,
     SessionSnapshot,
+};
+use arky_types::{
+    Message,
+    SessionId,
 };
 use axum::{
     Json,
@@ -104,8 +104,8 @@ mod tests {
         sync::Arc,
     };
 
-    use arky_core::Agent;
-    use arky_session::{
+    use arky_runtime::Agent;
+    use arky_storage::{
         InMemorySessionStore,
         NewSession,
         SessionFilter,
@@ -177,13 +177,11 @@ mod tests {
     #[tokio::test]
     async fn session_detail_should_return_not_found_for_unknown_session() {
         let (state, _store) = state();
-        let response = get_session(
-            State(state),
-            Path(arky_protocol::SessionId::new().to_string()),
-        )
-        .await
-        .expect_err("missing session should fail")
-        .into_response();
+        let response =
+            get_session(State(state), Path(arky_types::SessionId::new().to_string()))
+                .await
+                .expect_err("missing session should fail")
+                .into_response();
 
         assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
     }
@@ -199,8 +197,8 @@ mod tests {
             .append_messages(
                 &session_id,
                 &[
-                    arky_protocol::Message::user("hello"),
-                    arky_protocol::Message::assistant("world"),
+                    arky_types::Message::user("hello"),
+                    arky_types::Message::assistant("world"),
                 ],
             )
             .await
@@ -219,8 +217,8 @@ mod tests {
             SessionMessagesResponse {
                 session_id: session_id.clone(),
                 messages: vec![
-                    arky_protocol::Message::user("hello"),
-                    arky_protocol::Message::assistant("world"),
+                    arky_types::Message::user("hello"),
+                    arky_types::Message::assistant("world"),
                 ],
             }
         );

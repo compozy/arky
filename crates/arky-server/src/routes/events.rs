@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use arky_protocol::AgentEvent;
+use arky_types::AgentEvent;
 use async_stream::stream;
 use axum::{
     extract::{
@@ -39,7 +39,7 @@ pub async fn stream_session_events(
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ServerError> {
     let session_id = parse_session_id(&session_id)?;
     let _ = state.session_store().load(&session_id).await?;
-    let mut subscription = state.agent().subscribe();
+    let mut subscription = state.runtime().subscribe();
 
     let stream = stream! {
         let mut sequence = SseSequence::new();

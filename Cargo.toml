@@ -1,19 +1,24 @@
 [workspace]
 members = [
     "crates/arky",
+    "crates/arky-control",
     "crates/arky-error",
     "crates/arky-config",
     "crates/arky-core",
     "crates/arky-claude-code",
     "crates/arky-codex",
     "crates/arky-hooks",
+    "crates/arky-integrations",
     "crates/arky-mcp",
     "crates/arky-protocol",
     "crates/arky-provider",
+    "crates/arky-runtime",
     "crates/arky-server",
     "crates/arky-session",
+    "crates/arky-storage",
     "crates/arky-tools",
     "crates/arky-tools-macros",
+    "crates/arky-types",
     "crates/arky-usage",
 ]
 resolver = "3"
@@ -28,19 +33,24 @@ rust-version = "1.94.0"
 [workspace.dependencies]
 # Internal crates
 arky = { path = "crates/arky" }
+arky-control = { path = "crates/arky-control" }
 arky-error = { path = "crates/arky-error" }
 arky-config = { path = "crates/arky-config" }
 arky-core = { path = "crates/arky-core" }
 arky-claude-code = { path = "crates/arky-claude-code" }
 arky-codex = { path = "crates/arky-codex" }
 arky-hooks = { path = "crates/arky-hooks" }
+arky-integrations = { path = "crates/arky-integrations" }
 arky-mcp = { path = "crates/arky-mcp" }
 arky-protocol = { path = "crates/arky-protocol" }
 arky-provider = { path = "crates/arky-provider" }
+arky-runtime = { path = "crates/arky-runtime" }
 arky-server = { path = "crates/arky-server" }
 arky-session = { path = "crates/arky-session" }
+arky-storage = { path = "crates/arky-storage" }
 arky-tools = { path = "crates/arky-tools" }
 arky-tools-macros = { path = "crates/arky-tools-macros" }
+arky-types = { path = "crates/arky-types" }
 arky-usage = { path = "crates/arky-usage" }
 
 # Async runtime

@@ -11,21 +11,26 @@ rust-version.workspace = true
 default = ["claude-code", "codex"]
 claude-code = ["dep:arky-claude-code"]
 codex = ["dep:arky-codex"]
-sqlite = ["arky-session/sqlite"]
+sqlite = ["arky-session/sqlite", "arky-storage/sqlite"]
 server = ["dep:arky-server", "arky-server/server"]
 full = ["claude-code", "codex", "sqlite", "server"]
 
 [dependencies]
+arky-control = { workspace = true }
 arky-error = { workspace = true }
 arky-config = { workspace = true }
 arky-core = { workspace = true }
 arky-hooks = { workspace = true }
+arky-integrations = { workspace = true }
 arky-mcp = { workspace = true }
 arky-protocol = { workspace = true }
 arky-provider = { workspace = true }
+arky-runtime = { workspace = true }
 arky-session = { workspace = true }
+arky-storage = { workspace = true }
 arky-tools = { workspace = true }
 arky-tools-macros = { workspace = true }
+arky-types = { workspace = true }
 arky-usage = { workspace = true }
 
 # Optional provider crates

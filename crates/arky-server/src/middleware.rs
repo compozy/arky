@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use arky_protocol::{
+use arky_types::{
     ProviderId,
     SessionId,
 };

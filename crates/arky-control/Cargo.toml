@@ -1,0 +1,17 @@
+[package]
+name = "arky-control"
+description = "Application composition and control-plane ports for the Arky AI agent SDK"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+arky-runtime = { workspace = true }
+arky-storage = { workspace = true }
+arky-types = { workspace = true }
+async-trait = { workspace = true }
+
+[lints]
+workspace = true

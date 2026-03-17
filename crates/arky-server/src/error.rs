@@ -5,13 +5,13 @@ use std::{
     time::Duration,
 };
 
-use arky_core::CoreError;
 use arky_error::{
     ClassifiedError,
     HttpErrorMapping,
 };
-use arky_protocol::ProviderId;
-use arky_session::SessionError;
+use arky_runtime::CoreError;
+use arky_storage::SessionError;
+use arky_types::ProviderId;
 use serde::Serialize;
 use serde_json::{
     Value,
@@ -269,8 +269,8 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::ServerError;
-    use arky_protocol::SessionId;
-    use arky_session::SessionError;
+    use arky_storage::SessionError;
+    use arky_types::SessionId;
 
     #[tokio::test]
     async fn error_formatting_should_map_classified_errors_to_json() {

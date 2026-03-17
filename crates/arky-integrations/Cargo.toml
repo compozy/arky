@@ -1,0 +1,15 @@
+[package]
+name = "arky-integrations"
+description = "Technical integration bridges for the Arky AI agent SDK"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+arky-hooks = { workspace = true }
+arky-mcp = { workspace = true }
+
+[lints]
+workspace = true

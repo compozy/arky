@@ -12,9 +12,12 @@ default = []
 server = ["dep:axum", "dep:tower-http"]
 
 [dependencies]
+arky-control = { workspace = true }
 arky-error = { workspace = true }
-arky-core = { workspace = true }
-arky-protocol = { workspace = true }
+arky-runtime = { workspace = true }
+arky-storage = { workspace = true }
+arky-types = { workspace = true }
+async-trait = { workspace = true }
 axum = { workspace = true, optional = true, features = ["http1", "json", "query", "tokio"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -22,7 +25,6 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
-arky-session = { workspace = true }
 async-stream = { workspace = true }
 futures = { workspace = true }
 tower-http = { version = "0.6.8", features = ["cors"], optional = true }
@@ -30,7 +32,6 @@ subtle = "2.6.1"
 
 [dev-dependencies]
 arky-provider = { workspace = true }
-async-trait = { workspace = true }
 pretty_assertions = { workspace = true }
 reqwest = { workspace = true, features = ["stream", "rustls-tls", "json"] }
 tokio = { workspace = true, features = ["test-util"] }

@@ -1,11 +1,13 @@
 //! Error types and helpers re-exported by the Arky facade.
 
 use arky_config::ConfigError;
-use arky_core::CoreError;
-use arky_hooks::HookError;
-use arky_mcp::McpError;
+use arky_integrations::{
+    HookError,
+    McpError,
+};
 use arky_provider::ProviderError;
-use arky_session::SessionError;
+use arky_runtime::CoreError;
+use arky_storage::SessionError;
 use arky_tools::ToolError;
 use thiserror::Error;
 
@@ -115,7 +117,7 @@ mod tests {
     };
 
     use arky_error::ClassifiedError;
-    use arky_hooks::HookEvent;
+    use arky_integrations::HookEvent;
     use pretty_assertions::assert_eq;
     use serde_json::json;
 

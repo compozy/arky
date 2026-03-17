@@ -6,7 +6,7 @@ use std::{
 };
 
 use arky_error::ClassifiedError;
-use arky_protocol::{
+use arky_types::{
     ContentBlock,
     Message,
     ReasoningEffort,
@@ -151,22 +151,22 @@ pub async fn chat_stream(
     if let Some(session_key) = &request.session_key {
         if let Some(session_id) = state.session_id_for_key(session_key).await {
             if request.resume_session.unwrap_or(true) {
-                state.agent().resume(session_id.clone()).await?;
+                state.runtime().resume(session_id.clone()).await?;
             } else {
-                let new_session = state.agent().new_session().await?;
+                let new_session = state.runtime().new_session().await?;
                 state
                     .set_session_key(session_key.clone(), new_session)
                     .await;
             }
         } else {
-            let new_session = state.agent().new_session().await?;
+            let new_session = state.runtime().new_session().await?;
             state
                 .set_session_key(session_key.clone(), new_session)
                 .await;
         }
     }
 
-    let agent_stream = state.agent().stream(request.prompt_text()).await?;
+    let agent_stream = state.runtime().stream(request.prompt_text()).await?;
 
     let stream = stream! {
         let mut agent_stream = agent_stream;

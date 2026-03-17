@@ -1,4 +1,4 @@
-//! In-process runtime client for driving an [`arky_core::Agent`].
+//! In-process runtime client for driving an [`arky_runtime::Agent`].
 
 use std::sync::{
     Arc,
@@ -8,12 +8,12 @@ use std::sync::{
     },
 };
 
-use arky_core::{
+use arky_runtime::{
     Agent,
     AgentEventStream,
     CoreError,
 };
-use arky_protocol::SessionId;
+use arky_types::SessionId;
 
 /// Thin client wrapper used by higher-level runtimes that need a disposable agent handle.
 #[derive(Clone)]
@@ -97,13 +97,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::RuntimeClient;
-    use arky_core::Agent;
-    use arky_protocol::{
-        AgentEvent,
-        EventMetadata,
-        Message,
-        ProviderId,
-    };
     use arky_provider::{
         Provider,
         ProviderCapabilities,
@@ -113,8 +106,14 @@ mod tests {
         ProviderFamily,
         ProviderRequest,
     };
-    use arky_session::InMemorySessionStore;
-
+    use arky_runtime::Agent;
+    use arky_storage::InMemorySessionStore;
+    use arky_types::{
+        AgentEvent,
+        EventMetadata,
+        Message,
+        ProviderId,
+    };
     #[derive(Clone)]
     struct RuntimeClientProvider {
         descriptor: ProviderDescriptor,
