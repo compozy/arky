@@ -72,17 +72,12 @@ pub fn mcp_tool_from_descriptor(descriptor: &ToolDescriptor) -> Result<Tool, Mcp
         schema_object(&descriptor.input_schema, "descriptor.input_schema")?;
     let export_name = encode_export_tool_name(&descriptor.canonical_name)?;
 
-    Ok(Tool {
-        name: export_name.into(),
-        title: Some(descriptor.display_name.clone()),
-        description: Some(descriptor.description.clone().into()),
-        input_schema: Arc::new(input_schema),
-        output_schema: None,
-        annotations: None,
-        execution: None,
-        icons: None,
-        meta: None,
-    })
+    Ok(Tool::new_with_raw(
+        export_name,
+        Some(descriptor.description.clone().into()),
+        Arc::new(input_schema),
+    )
+    .with_title(descriptor.display_name.clone()))
 }
 
 /// Translates an MCP `CallToolResult` into an Arky `ToolResult`.
@@ -191,12 +186,28 @@ pub fn tool_result_to_mcp(result: &ToolResult) -> Result<CallToolResult, McpErro
         }
     }
 
-    Ok(CallToolResult {
-        content,
-        structured_content,
-        is_error: Some(result.is_error),
-        meta: None,
-    })
+    let mut translated =
+        build_call_tool_result(structured_content, &content, result.is_error);
+    translated.content = content;
+
+    Ok(translated)
+}
+
+/// Builds a [`CallToolResult`] from optional structured content, a content
+/// list, and an error flag. Extracted as a free function so that matching
+/// on the `Option` does not trigger `clippy::option_if_let_else` (whose
+/// suggested fix, `map_or_else`, is disallowed by project lint rules).
+fn build_call_tool_result(
+    structured: Option<serde_json::Value>,
+    content: &[Content],
+    is_error: bool,
+) -> CallToolResult {
+    match (structured, is_error) {
+        (Some(v), true) => CallToolResult::structured_error(v),
+        (Some(v), false) => CallToolResult::structured(v),
+        (None, true) => CallToolResult::error(content.to_vec()),
+        (None, false) => CallToolResult::success(content.to_vec()),
+    }
 }
 
 /// Builder for `McpToolBridge`.
@@ -477,21 +488,22 @@ mod tests {
 
         let mcp_tool = mcp_tool_from_descriptor(&descriptor)
             .expect("descriptor should translate to MCP");
-        let translated = tool_descriptor_from_mcp(
-            "filesystem",
-            &Tool {
-                name: "read_file".into(),
-                title: mcp_tool.title.clone(),
-                description: mcp_tool.description.clone(),
-                input_schema: Arc::new(mcp_tool.input_schema.as_ref().clone()),
-                output_schema: None,
-                annotations: None,
-                execution: None,
-                icons: None,
-                meta: None,
-            },
+        let remote_tool = Tool::new(
+            "read_file",
+            mcp_tool
+                .description
+                .clone()
+                .expect("translated tool should preserve description"),
+            Arc::new(mcp_tool.input_schema.as_ref().clone()),
         )
-        .expect("MCP tool should translate back");
+        .with_title(
+            mcp_tool
+                .title
+                .clone()
+                .expect("translated tool should preserve title"),
+        );
+        let translated = tool_descriptor_from_mcp("filesystem", &remote_tool)
+            .expect("MCP tool should translate back");
 
         assert_eq!(translated, descriptor);
     }

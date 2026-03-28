@@ -86,15 +86,30 @@ tracing-subscriber = { version = "0.3", features = [
 # Schema generation
 schemars = "0.8"
 
+# Serialization (config)
+toml = "0.9"
+serde_norway = "0.9.42"
+
 # HTTP
-reqwest = { version = "0.12", default-features = false, features = [
+reqwest = { version = "0.13.2", default-features = false, features = [
     "json",
-    "rustls-tls",
+    "rustls",
+    "stream",
 ] }
 axum = { version = "0.8", default-features = false }
+base64 = "0.22"
 
 # MCP
-rmcp = "0.16"
+rmcp = { version = "1.2", default-features = false, features = [
+    "client",
+    "server",
+    "transport-child-process",
+    "transport-io",
+    "transport-streamable-http-client-reqwest",
+    "transport-streamable-http-server",
+    "auth",
+    "reqwest",
+] }
 
 # Data structures
 dashmap = "6"
@@ -102,7 +117,8 @@ uuid = { version = "1", features = ["v4", "serde"] }
 regex = "1"
 
 # Database (feature-gated)
-tokio-rusqlite = "0.7"
+rusqlite = { version = "0.31", features = ["bundled", "serde_json"] }
+tokio-rusqlite = "0.5.1"
 
 # Proc macro support
 syn = { version = "2", features = ["full", "extra-traits"] }

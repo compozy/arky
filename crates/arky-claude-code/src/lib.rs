@@ -73,6 +73,7 @@ pub use crate::{
         CLAUDE_COMPATIBLE_PROVIDER_IDS,
         ClaudeCompatibleProviderConfig,
         ClaudeCompatibleProviderKind,
+        ClaudeProviderProfile,
         MinimaxProvider,
         MinimaxProviderConfig,
         MoonshotProvider,

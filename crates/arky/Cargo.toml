@@ -45,7 +45,7 @@ async-trait.workspace = true
 criterion = { version = "0.8.2", features = ["async_tokio", "html_reports"] }
 futures.workspace = true
 pretty_assertions = { workspace = true }
-reqwest = { workspace = true, features = ["json", "rustls-tls", "stream"] }
+reqwest = { workspace = true, features = ["json", "rustls", "stream"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "test-util", "time"] }
 tokio-util.workspace = true

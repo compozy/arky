@@ -22,12 +22,12 @@ use arky_session::{
     SqliteSessionStore,
 };
 use pretty_assertions::assert_eq;
-use tempfile::TempDir;
-use tokio_rusqlite::rusqlite::{
+use rusqlite::{
     Connection,
     OptionalExtension,
     params,
 };
+use tempfile::TempDir;
 
 fn temp_db_path() -> (TempDir, std::path::PathBuf) {
     let temp_dir = tempfile::tempdir().expect("temporary directory should be created");

@@ -33,7 +33,7 @@ subtle = "2.6.1"
 [dev-dependencies]
 arky-provider = { workspace = true }
 pretty_assertions = { workspace = true }
-reqwest = { workspace = true, features = ["stream", "rustls-tls", "json"] }
+reqwest = { workspace = true, features = ["stream", "rustls", "json"] }
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]

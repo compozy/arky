@@ -113,7 +113,9 @@ impl ClaudeCodeProvider {
         Self::with_profile_config(ClaudeProviderProfile::ClaudeCode, config)
     }
 
-    pub(crate) fn with_profile_config(
+    /// Creates a provider with an explicit compatible-provider profile plus base config.
+    #[must_use]
+    pub fn with_profile_config(
         profile: ClaudeProviderProfile,
         config: ClaudeCodeProviderConfig,
     ) -> Self {
@@ -549,9 +551,11 @@ fn append_text_block(message: &mut Message, text: &str) {
 }
 
 fn append_tool_use_block(message: &mut Message, tool_call: &ToolCall) {
-    if message.content.iter().any(|block| {
-        matches!(block, ContentBlock::ToolUse { call } if call.id == tool_call.id)
-    }) {
+    if message
+        .content
+        .iter()
+        .any(|block| matches!(block, ContentBlock::ToolUse { call } if call.id == tool_call.id))
+    {
         return;
     }
 

@@ -283,20 +283,31 @@ impl OllamaProviderConfig {
     }
 }
 
+/// Provider profile variants for Claude Code CLI integration.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClaudeProviderProfile {
+    /// Default Claude Code provider with no additional configuration.
     ClaudeCode,
+    /// Zai provider configuration.
     Zai(ZaiProviderConfig),
+    /// `OpenRouter` provider configuration.
     OpenRouter(OpenRouterProviderConfig),
+    /// Vercel provider configuration.
     Vercel(VercelProviderConfig),
+    /// Moonshot provider configuration.
     Moonshot(MoonshotProviderConfig),
+    /// Minimax provider configuration.
     Minimax(MinimaxProviderConfig),
+    /// AWS Bedrock provider configuration.
     Bedrock(BedrockProviderConfig),
+    /// Google Cloud Vertex AI provider configuration.
     Vertex(VertexProviderConfig),
+    /// Ollama local model provider configuration.
     Ollama(OllamaProviderConfig),
 }
 
 impl ClaudeProviderProfile {
+    /// Returns the provider kind discriminant for this profile.
     #[must_use]
     pub const fn kind(&self) -> ClaudeCompatibleProviderKind {
         match self {
@@ -312,11 +323,13 @@ impl ClaudeProviderProfile {
         }
     }
 
+    /// Returns the provider descriptor for this profile.
     #[must_use]
     pub fn descriptor(&self) -> ProviderDescriptor {
         self.kind().descriptor()
     }
 
+    /// Resolves the model identifier to use at runtime for the given request.
     #[must_use]
     pub fn runtime_model(&self, request: &ProviderRequest) -> String {
         match self {
@@ -329,6 +342,7 @@ impl ClaudeProviderProfile {
         }
     }
 
+    /// Computes environment variable overrides needed by this profile.
     #[must_use]
     pub fn env_overrides(
         &self,
@@ -807,6 +821,7 @@ const fn claude_compatible_capabilities() -> ProviderCapabilities {
         .with_tool_calls(true)
         .with_mcp_passthrough(true)
         .with_session_resume(true)
+        .with_extended_thinking(true)
 }
 
 #[cfg(test)]

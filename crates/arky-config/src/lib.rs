@@ -5,6 +5,7 @@
 //! to the rest of the SDK.
 
 mod error;
+mod layered;
 mod loader;
 mod merge;
 mod validate;
@@ -15,6 +16,23 @@ pub use crate::{
         ConfigError,
         ValidationIssue,
     },
+    layered::{
+        ClaudeCodeBehaviorLayer,
+        ClaudeCompatibleBehaviorLayer,
+        CodexBehaviorLayer,
+        PartialProviderBehaviorConfig,
+        PartialProviderProfileConfig,
+        ProviderBehaviorLayer,
+        ProviderProfileConfig,
+        ProviderRequestDefaults,
+        ResolvedAgentProviderConfig,
+        ResolvedClaudeCodeBehaviorConfig,
+        ResolvedClaudeCompatibleBehaviorConfig,
+        ResolvedCodexBehaviorConfig,
+        ResolvedProviderBehaviorConfig,
+        normalize_driver,
+        validate_request_extra,
+    },
     loader::{
         AgentConfig,
         AgentConfigBuilder,
@@ -24,6 +42,7 @@ pub use crate::{
         ConfigLoader,
         ProviderConfig,
         ProviderConfigBuilder,
+        ProviderProfileConfigBuilder,
         WorkspaceConfig,
         WorkspaceConfigBuilder,
     },
