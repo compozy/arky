@@ -6,16 +6,6 @@ use std::{
     path::PathBuf,
 };
 
-use arky_claude_code::{
-    ClaudeCompatibleProviderKind,
-    ClaudeFilesystemConfig,
-    ClaudeSessionConfig,
-};
-use arky_codex::{
-    CodexSandboxConfig,
-    CodexSandboxExclusions,
-    CodexWorkspaceConfig,
-};
 use arky_protocol::ReasoningEffort;
 use serde::{
     Deserialize,
@@ -27,6 +17,16 @@ use crate::error::ValidationIssue;
 
 const MAX_REQUEST_EXTRA_DEPTH: usize = 4;
 const MAX_REQUEST_EXTRA_ENTRIES: usize = 32;
+const CLAUDE_COMPATIBLE_DRIVER_IDS: &[&str] = &[
+    "zai",
+    "openrouter",
+    "vercel",
+    "moonshot",
+    "minimax",
+    "bedrock",
+    "vertex",
+    "ollama",
+];
 const FORBIDDEN_REQUEST_EXTRA_KEYS: &[&str] = &[
     "allow_npx",
     "api_key",
@@ -470,12 +470,56 @@ pub struct PartialProviderProfileConfig {
 }
 
 /// Concrete Codex behavior after profile + agent layering has been resolved.
+///
+/// These resolved structs stay local to `arky-config` so the leaf config crate
+/// does not depend on provider implementation crates.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ResolvedCodexSandboxExclusions {
+    /// Whether the sandbox should exclude the tmpdir environment variable.
+    pub sandbox_exclude_tmpdir_env_var: bool,
+    /// Whether the sandbox should exclude `/tmp`.
+    pub sandbox_exclude_slash_tmp: bool,
+}
+
+/// Config-local sandbox settings resolved from layered Codex config input.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ResolvedCodexSandboxConfig {
+    /// Optional sandbox mode override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_mode: Option<String>,
+    /// Additional writable roots granted to the sandbox.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sandbox_writable_roots: Vec<PathBuf>,
+    /// Optional network access override for sandboxed runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_network_access: Option<bool>,
+    /// Whether full-auto mode is requested.
+    pub full_auto: bool,
+    /// Whether approvals and sandboxing may be bypassed entirely.
+    pub dangerously_bypass_approvals_and_sandbox: bool,
+    /// Sandbox exclusion rules.
+    #[serde(flatten)]
+    pub exclusions: ResolvedCodexSandboxExclusions,
+}
+
+/// Config-local workspace toggles resolved from layered Codex config input.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ResolvedCodexWorkspaceConfig {
+    /// Whether git-repo checks should be skipped.
+    pub skip_git_repo_check: bool,
+    /// Whether the plan tool should be enabled.
+    pub include_plan_tool: bool,
+    /// Whether the last Codex session should be resumed automatically.
+    pub resume_last: bool,
+}
+
+/// Concrete Codex behavior after profile + agent layering has been resolved.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedCodexBehaviorConfig {
     #[serde(flatten)]
-    pub sandbox: CodexSandboxConfig,
+    pub sandbox: ResolvedCodexSandboxConfig,
     #[serde(flatten)]
-    pub workspace: CodexWorkspaceConfig,
+    pub workspace: ResolvedCodexWorkspaceConfig,
     pub web_search: bool,
     pub rmcp_client: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -487,15 +531,15 @@ pub struct ResolvedCodexBehaviorConfig {
 impl CodexBehaviorLayer {
     fn resolve(&self) -> ResolvedCodexBehaviorConfig {
         ResolvedCodexBehaviorConfig {
-            sandbox: CodexSandboxConfig {
+            sandbox: ResolvedCodexSandboxConfig {
                 sandbox_mode: self.sandbox_mode.clone(),
                 sandbox_writable_roots: Vec::new(),
                 sandbox_network_access: self.sandbox_network_access,
                 full_auto: false,
                 dangerously_bypass_approvals_and_sandbox: false,
-                exclusions: CodexSandboxExclusions::default(),
+                exclusions: ResolvedCodexSandboxExclusions::default(),
             },
-            workspace: CodexWorkspaceConfig {
+            workspace: ResolvedCodexWorkspaceConfig {
                 skip_git_repo_check: false,
                 include_plan_tool: self.include_plan_tool.unwrap_or(false),
                 resume_last: self.resume_last.unwrap_or(false),
@@ -509,12 +553,38 @@ impl CodexBehaviorLayer {
 }
 
 /// Concrete Claude behavior after profile + agent layering has been resolved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ResolvedClaudeSessionConfig {
+    /// Whether the conversation should continue.
+    pub continue_conversation: bool,
+    /// Optional resume identifier.
+    pub resume: Option<String>,
+    /// Optional fixed session identifier.
+    pub session_id: Option<String>,
+    /// Optional point-in-time resume marker.
+    pub resume_session_at: Option<String>,
+    /// Whether sessions should persist.
+    pub persist_session: bool,
+    /// Whether sessions may be forked.
+    pub fork_session: bool,
+}
+
+/// Config-local filesystem settings resolved from layered Claude config input.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ResolvedClaudeFilesystemConfig {
+    /// Additional directories exposed to Claude.
+    pub additional_directories: Vec<PathBuf>,
+    /// Whether file checkpointing is enabled.
+    pub enable_file_checkpointing: bool,
+}
+
+/// Concrete Claude behavior after profile + agent layering has been resolved.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResolvedClaudeCodeBehaviorConfig {
     #[serde(flatten)]
-    pub session: ClaudeSessionConfig,
+    pub session: ResolvedClaudeSessionConfig,
     #[serde(flatten)]
-    pub filesystem: ClaudeFilesystemConfig,
+    pub filesystem: ResolvedClaudeFilesystemConfig,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_tools: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -530,7 +600,7 @@ pub struct ResolvedClaudeCodeBehaviorConfig {
 impl ClaudeCodeBehaviorLayer {
     fn resolve(&self) -> ResolvedClaudeCodeBehaviorConfig {
         ResolvedClaudeCodeBehaviorConfig {
-            session: ClaudeSessionConfig {
+            session: ResolvedClaudeSessionConfig {
                 continue_conversation: self.continue_conversation.unwrap_or(false),
                 resume: None,
                 session_id: None,
@@ -538,7 +608,7 @@ impl ClaudeCodeBehaviorLayer {
                 persist_session: false,
                 fork_session: self.fork_session.unwrap_or(false),
             },
-            filesystem: ClaudeFilesystemConfig {
+            filesystem: ResolvedClaudeFilesystemConfig {
                 additional_directories: self
                     .additional_directories
                     .clone()
@@ -725,14 +795,13 @@ fn validate_request_extra_value(
 }
 
 fn expected_namespace(driver: &str) -> Option<&'static str> {
-    if driver == "codex" {
-        return Some("codex");
-    }
-
-    match ClaudeCompatibleProviderKind::from_kind(driver) {
-        Some(ClaudeCompatibleProviderKind::ClaudeCode) => Some("claude_code"),
-        Some(_) => Some("claude_compatible"),
-        None => None,
+    match driver {
+        "codex" => Some("codex"),
+        "claude-code" => Some("claude_code"),
+        other if CLAUDE_COMPATIBLE_DRIVER_IDS.contains(&other) => {
+            Some("claude_compatible")
+        }
+        _ => None,
     }
 }
 

@@ -8,11 +8,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-arky-claude-code = { workspace = true }
-arky-codex = { workspace = true }
 arky-error = { workspace = true }
 arky-protocol = { workspace = true }
-arky-provider = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_norway = { workspace = true }

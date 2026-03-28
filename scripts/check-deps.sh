@@ -31,13 +31,14 @@ EXPECTED = {
     "arky-error": set(),
     "arky-protocol": {"arky-error"},
     "arky-types": {"arky-protocol"},
-    "arky-config": {"arky-error"},
+    "arky-config": {"arky-error", "arky-protocol"},
     "arky-tools-macros": set(),
     "arky-tools": {"arky-error", "arky-protocol"},
     "arky-hooks": {"arky-error", "arky-protocol", "arky-tools"},
     "arky-integrations": {"arky-hooks", "arky-mcp"},
     "arky-session": {"arky-error", "arky-protocol"},
     "arky-storage": {"arky-session"},
+    "arky-usage": {"arky-protocol"},
     "arky-provider": {
         "arky-error",
         "arky-protocol",
@@ -71,6 +72,7 @@ EXPECTED = {
         "arky-hooks",
         "arky-session",
         "arky-mcp",
+        "arky-usage",
     },
     "arky-server": {
         "arky-error",
@@ -98,6 +100,7 @@ EXPECTED = {
         "arky-tools",
         "arky-tools-macros",
         "arky-types",
+        "arky-usage",
     },
 }
 
